@@ -1,0 +1,695 @@
+<?php
+// $Id$
+
+/**
+ * @file
+ * Integrates quickpay.dk redirected payment service.
+ *
+ * Development sponsored by QuickPay.
+ *
+ * Thanks to the author of uc_2checkout.module for inspiration.
+ */
+
+/*******************************************************************************
+ * Hook Functions (Drupal)
+ ******************************************************************************/
+
+/**
+ * Implementation of hook_menu().
+ */
+function uc_quickpay_menu($may_cache) {
+  if ($may_cache) {
+    $items[] = array(
+      'path' => 'cart/quickpay/complete',
+      'title' => t('Order complete'),
+      'callback' => 'uc_quickpay_complete',
+      'callback arguments' => array(arg(3)),
+      'access' => user_access('access content'),
+      'type' => MENU_CALLBACK,
+    );
+  } else {
+    if (quickpay_is_hosted()) {
+      $items[] =
+	array('path' => 'quickpay', 
+	      'title' => t('QuickPay resultpage'),
+	      'callback' => 'uc_quickpay_resultpage',
+	      'callback arguments' => array(arg(1)),
+	      'access' => true, 
+	      'type' => MENU_CALLBACK
+	      );
+      if (variable_get('quickpay_hosted_popup', true)) {
+	$items[] =
+	  array('path' => 'quickpay_popdown', 
+		'title' => t('QuickPay popdown page'),
+		'callback' => 'uc_quickpay_popdown',
+		'callback arguments' => array(arg(1), arg(2)),
+		'access' => true, 
+		'type' => MENU_CALLBACK
+		);
+      }
+    }
+  }
+
+  // redirect to SSL if we're not using the hosted method and not posting.
+  if (!$_SERVER['HTTPS'] and !quickpay_is_hosted() and
+      arg(0) == 'cart' and arg(1) == 'checkout' and
+      !$_POST) {
+    drupal_goto(str_replace('http:', 'https:',
+			    url($_GET['q'],
+				drupal_query_string_encode($_GET, array('q')),
+				null, true)));
+  }
+
+  // This oddity is because we have to have the uc_cart_checkout_form
+  // post directly to uc_cart_checkout_review_form, in order to not loose
+  // the card data. We have to use global vars as sessions ends up in the
+  // database, and we can't have that.
+  if (!quickpay_is_hosted() and $_POST['form_id'] == 'uc_cart_checkout_form'
+      and arg(0) == 'cart' and arg(1) == 'checkout' and
+      arg(2) == 'review') {
+    drupal_get_form('uc_cart_checkout_form');
+  }
+  return $items;
+}
+
+/**
+ * Implementation of hook_form_alter().
+ */
+function uc_quickpay_form_alter($form_id, &$form) {
+  global $_uc_quickpay_carddata;
+  if ($form_id == 'uc_cart_checkout_review_form' &&
+      ($order_id = intval($_SESSION['cart_order'])) > 0) {
+    if (quickpay_is_hosted()) { 
+      $order = uc_order_load($order_id);
+
+      if ($order->payment_method == 'quickpay') {
+	unset($form['submit']);
+	$form['#prefix'] = '<table style="display: inline; padding-top: 1em;"><tr><td>';
+	$form['#suffix'] = '</td><td>'. drupal_get_form('uc_quickpay_form', $order) .'</td></tr></table>';
+      }
+    } else {
+      // API
+      if (isset($_POST['quickpay_carddata'])) {
+	$_uc_quickpay_carddata = unserialize($_POST['quickpay_carddata']);
+      }
+      // hide the card detail as hidden vars and do the authorize on submit.
+      if (!$_uc_quickpay_carddata) {
+	// No card details?
+	drupal_goto('cart/checkout');
+	return;
+      }
+      $form['quickpay_carddata'] =
+	array('#type' => 'hidden',
+	      '#value' => serialize($_uc_quickpay_carddata),
+	      );
+      $form['#validate'] = array_merge(array('uc_quickpay_card_validate' =>
+					     array()),
+				       ($form['#validate'] ?
+					$form['#validate'] : array()));
+    }
+  } elseif ($form_id == 'uc_cart_checkout_form' and !quickpay_is_hosted()) {
+    $form['#attributes']['autocomplete'] = 'off';
+    $form['#redirect'] = false;
+    $form['#action'] = url('cart/checkout/review');
+  } elseif ($form_id == 'uc_payment_by_order_form') {
+    $order = uc_order_load($form['order_id']['#value']);
+    if ($order->payment_method == 'quickpay') {
+      $payment = _uc_quickpay_get_last_transaction($order->order_id);
+      if ($payment) {
+	// Default theme function doesn't render additional elements, so
+	// we have to override.
+	$form['#theme'] = 'uc_quickpay_by_order_form';
+	$form['quickpay'] =
+	  array('#type' => 'fieldset',
+		'#weight' => -5,
+		'#title' => t('Quickpay'),
+		);
+	$form['quickpay']['admin'] =
+	array('#type' => 'markup',
+	      '#value' => l(t('Quickpay administration'),
+			    'https://secure.quickpay.dk/payments/index.php',
+			    array('target' => 'ec_quickpay'),
+			    'searchType=word&keyword=' .
+			    $payment->qp_transaction .
+			    '&transaction=1&showDeleted=0'));
+	// Override validate and submit.
+	$form['#validate'] = array('uc_quickpay_transaction_validate' =>
+				   array($form['#validate']));
+	$form['#submit'] = array('uc_quickpay_transaction_submit' =>
+				 array($form['#submit']));
+	$balance = uc_payment_balance($order->order_id);
+	if ($balance == 0) {
+	  // Add capture
+	  $form['quickpay']['capture'] =
+	    array('#type' => 'submit',
+		  '#value' => t('Capture'));
+	  // reverse
+	  $form['quickpay']['reverse'] =
+	    array('#type' => 'submit',
+		  '#value' => t('Reverse'));
+
+	} elseif ($balance = $order->order_total) {
+	  // Add credit
+	}
+      }
+    }
+  }
+}
+
+function uc_quickpay_card_validate($form_id, $form_values) {
+  // A bit too late, but just to make sure nobody attemps otherwise.
+  if (!$_SERVER['HTTPS']) {
+    drupal_access_denied();
+    return;
+  }
+  
+  $carddata = unserialize($form_values['quickpay_carddata']);
+  if (!$carddata) {
+    form_set_error('', t('Internal error, no card data available'));
+    return;
+  }
+
+  $order = uc_order_load($_SESSION['cart_order']);
+  $payment_url = 'cart/checkout';
+  $transaction = quickpay_authorize($carddata, $order->order_id,
+				    $order->order_total);
+
+  $res = _uc_quickpay_handle_transaction($order, $transaction);
+  if ($res === true) {
+    $url = url('cart/quickpay/complete/' . uc_cart_get_id(), null, null, true);
+    drupal_goto($url);
+  } elseif ($res === null) {
+    drupal_set_message(t('Payment failed.'), 'error');
+    drupal_goto($payment_url);
+    return;
+  } else {
+    drupal_set_message(t('Payment failed, description: "%error"', array('%error' => $res)), 'error');
+    drupal_goto($payment_url);
+    return;
+  }
+}
+
+function uc_quickpay_transaction_validate($form_id, $form_values, $elements,
+					  $old_validate) {
+  if ($form_values['op'] == t('Capture') or 
+      $form_values['op'] == t('Reverse')) {
+    return true;
+  } else {
+    foreach ($old_validate as $function => $args) {
+      $args = array_merge(array($elements), $args);
+      $args = array_merge(array($form_id, $form_values), $args);
+      if (function_exists($function))  {
+	return call_user_func_array($function, $args);
+      }
+    }
+  }
+}
+
+function uc_quickpay_transaction_submit($form_id, $form_values, $old_submit) {
+  if ($form_values['op'] == t('Capture') or 
+      $form_values['op'] == t('Reverse')) {
+    $order = uc_order_load($form_values['order_id']);
+    $payment = _uc_quickpay_get_last_transaction($order->order_id);
+    // FIXME: use _ec_quickpay_handle_transaction here...
+    if ($form_values['op'] == t('Capture')) {
+      $qptxn = quickpay_capture(array('transaction' =>
+				      $payment->qp_transaction),
+				$order->order_total);
+      if (quickpay_successful($qptxn)) {
+	drupal_set_message(t('Successfully captured.'));
+	uc_payment_enter($order->order_id, 'quickpay', $qptxn['amount'], 0,
+			 array('qp_transaction' =>
+			       $transaction['transaction']),
+			 'Captured ' . $qptxn['amount']);
+      } else {
+	$error = _quickpay_qpstat_codes($qptxn['qpstat']);
+	drupal_set_message(t('Capture failed, reason given: %error',
+			     array('%error' => $error)), 'error');
+	uc_payment_enter($order->order_id, 'quickpay', 0, 0,
+			 array('qp_transaction' =>
+			       $transaction['transaction']),
+			 'Capture failed, error: ' . $error);
+      }
+    } elseif ($form_values['op'] == t('Reverse')) {
+      $qptxn = quickpay_reverse(array('transaction' =>
+				      $payment->qp_transaction));
+      if (quickpay_successful($qptxn)) {
+	drupal_set_message(t('Successfully reversed.'));
+	uc_payment_enter($order->order_id, 'quickpay', 0, 0,
+			 array('qp_transaction' =>
+			       $transaction['transaction']),
+			 'Reversed.');
+      } else {
+	$error = _quickpay_qpstat_codes($qptxn['qpstat']);
+	drupal_set_message(t('Reversal failed, reason given: %error',
+			     array('%error' => $error)), 'error');
+	uc_payment_enter($order->order_id, 'quickpay', 0, 0,
+			 array('qp_transaction' =>
+			       $transaction['transaction']),
+			 'Reversal failed, error: ' . $error);
+      }
+    }
+  } else {
+    foreach ($old_submit as $function => $args) {
+      $args = array_merge(array($form_id, $form_values), $args);
+      if (function_exists($function))  {
+	return call_user_func_array($function, $args);
+      }
+    }
+  }
+}
+
+
+/*******************************************************************************
+ * Hook Functions (Ubercart)
+ ******************************************************************************/
+
+/**
+ * Implementation of hook_payment_method().
+ */
+function uc_quickpay_payment_method() {
+  /*
+  $path = base_path() . drupal_get_path('module', 'uc_2checkout');
+  $title = variable_get('uc_2checkout_method_title', t('Credit card on a secure server:'));
+  $title .= '<br /><img src="'. $path .'/2cocc05.gif" style="position: relative; left: 2.5em;">';
+  */
+  // FIXME: make nice, like the above.
+  $title = t("Credit card via Quickpay: " ) . // "<br />" . 
+    theme('quickpay_cards', quickpay_supported_cards());
+  
+  $methods[] = array(
+    'id' => 'quickpay',
+    'name' => t('QuickPay'),
+    'title' => $title,
+    'review' => t('Credit card'),
+    'desc' => t('Redirect to QuickPay to pay by credit card.'),
+    'callback' => 'uc_payment_method_quickpay',
+    'weight' => 3,
+    'checkout' => TRUE,
+    'no_gateway' => TRUE,
+  );
+
+  return $methods;
+}
+
+
+/*******************************************************************************
+ * Callback Functions, Forms, and Tables
+ ******************************************************************************/
+
+function theme_uc_quickpay_by_order_form($form) {
+  $output = '<p><strong>'. t('Order total:') .'</strong> '. drupal_render($form['order_total'])
+           .'<br /><strong>'. t('Current balance:') .'</strong> '
+          . drupal_render($form['balance']) .'</p>';
+  $output .= '<p>'. tapir_get_table('uc_payments_table', $form) .'</p>'
+           . '<p>'. drupal_render($form['form_id'])
+           . drupal_render($form['form_token']) .
+    drupal_render($form['quickpay']) . '</p>';
+  return $output;
+}
+
+/**
+ * Callback for quickpay payment method settings.
+ */
+function uc_payment_method_quickpay($op, &$arg1) {
+  global $_uc_quickpay_carddata;
+  switch ($op) {
+  case 'cart-details':
+    /* $details = 'FIXME: details go here';
+    return $details; */
+    if (!quickpay_is_hosted()) {
+      // Ensure SSL.
+      if (!$_SERVER['HTTPS']) {
+	return t('Cannot process credit card data without SSL');
+      }
+      return uc_strip_form(drupal_get_form('uc_quickpay_card_form'));
+    }
+    return;
+  case 'cart-process':
+    // FIXME: validate and return true on success. Report errors with drupal_set_message
+    $_uc_quickpay_carddata =
+      array('number' => check_plain($_POST['cc_number']),
+	    'exp_month' => check_plain($_POST['cc_month']),
+	    'exp_year' => check_plain(substr($_POST['cc_year'], -2)),
+	    'cvd' => check_plain($_POST['ccv']));
+    return;
+  case 'cart-review':
+    // Doing nothing, form_alter is handling this.
+    return;
+  case 'settings':
+    $form = quickpay_settings_form();
+    // Disable some options we're not using.
+    $form['quickpay_success_url']['#type'] = 'value';
+    $form['quickpay_success_url_anon']['#type'] = 'value';
+    $form['quickpay_default_currency']['#description'] .= t('<em>WARNING:</em> This should be the same as the configured &Uuml;bercart currency.');
+    $form['api']['quickpay_api_success_message']['#type'] = 'value';
+    $form['api']['quickpay_api_success_message_anon']['#type'] = 'value';
+    // $form['quickpay_method']['#type'] = 'value';
+    // $form['quickpay_method']['#value'] = 'hosted';
+    
+    //  $form['hosted']['quickpay_hosted_link_message'] =
+    return $form;
+  case 'order-delete':
+    // FIXME: Delete associated transactions?
+  }
+}
+
+// Form to build the submission to quickpay.dk
+function uc_quickpay_form($order) {
+  $data = array();
+  if (quickpay_is_hosted()) {
+    // FIXME: work together with i18n
+    $data['language'] = variable_get('quickpay_hosted_language', 'en');
+    // FIXME: should depend on whether order needs shipping
+    $data['autocapture'] = '0';
+    $data['ordernum'] = variable_get('quickpay_order_prefix', '') .
+      $order->order_id;
+    list($amount, $currency) = _quickpay_validate_amount($order->order_total,
+							 variable_get('quickpay_default_currency', ''));
+    if (!$currency) {
+      // FIXME: better error handling.
+      drupal_set_message(t('Internal error.'));
+      drupal_not_found();
+      return;
+    }
+    $data['amount'] = $amount;
+    // FIXME: any other option than using default currency?
+    $data['currency'] = $currency;
+    $data['merchant'] = variable_get('quickpay_merchant', '');
+
+      
+    $data['resultpage'] = url('quickpay/' . $order->order_id, null, null, true);
+  
+    $data['okpage'] = url('cart/quickpay/complete/' . uc_cart_get_id(), null, null, true);
+    // FIXME: configurable errorpage?
+    $data['errorpage'] = url('cart/checkout/review', null, null, true); // url('store/payment/quickpay/' . $txn->txnid . '/error', null, null, true));
+
+    $data['md5checkV2'] = md5($data['language'] . $data['autocapture'] .
+			      $data['ordernum'] . $data['amount'] .
+			      $data['currency'] . $data['merchant'] .
+			      $data['okpage'] . $data['errorpage'] .
+			      $data['resultpage'] . /* $data['ccipage'] . */
+			      variable_get('quickpay_secret', '')
+			      );
+    
+    $form['#method'] = 'POST';
+    // FIXME: Make quickpay.php url settable?
+    $form['#action'] = 'https://secure.quickpay.dk/quickpay.php';
+  
+    foreach ($data as $name => $value) {
+      $form[$name] = array('#type' => 'hidden', '#value' => $value);
+    }
+
+    $form['submit'] =
+      array('#type' => 'submit',
+	    '#value' => variable_get('quickpay_hosted_link_button',
+				     'Continue to QuickPay'),
+	    );
+    // The oddity of setting the return urls by JavaScript, ensures that
+    // we're only using the JavaScript requiring popdown page if JavaScript is
+    // enabled.
+    $ok_url = url('quickpay_popdown/' . $order->order_id . '/success', null,
+		  null, true);
+    $error_url = url('quickpay_popdown/' . $order->order_id . '/error', null,
+		     null, true);
+    $new_md5 = md5($data['language'] . $data['autocapture'] .
+		   $data['ordernum'] . $data['amount'] .
+		   $data['currency'] . $data['merchant'] .
+		   $ok_url . $error_url . $data['resultpage'] .
+		   /* $data['ccipage'] . */
+		   variable_get('quickpay_secret', ''));
+
+    if (variable_get('quickpay_hosted_popup', true)) {
+      //$form['#attributes']['target'] = 'quickpay_payment';
+      $js = <<<EOF
+	$(document).ready(function() {
+	  $('#uc-quickpay-form').submit(function() {
+	    var left = (screen.width) ? (screen.width-500)/2 : 0;
+	    var top = (screen.height) ? (screen.height-300)/2 : 0;
+	    $(this).find('#edit-okpage').val('$ok_url');
+	    $(this).find('#edit-errorpage').val('$error_url');
+	    $(this).find('#edit-md5checkV2').val('$new_md5');
+	    window.open('','quickpay_payment', 'top=' + top + ',left=' + left + ',height=300,width=500,scrollbars=yes,toolbars=no,statusbar=yes,location=0');
+	    $(this).attr('target', 'quickpay_payment');
+	    return true;
+	  });
+	});
+EOF;
+      drupal_add_js($js, 'inline');
+    }
+  } 
+  return $form;
+}
+
+function uc_quickpay_card_form() {
+  // Extra safety check.
+  if (!$_SERVER['HTTPS']) {
+    return;
+  }
+
+  // Prepare the values of the form fields.
+  $years  = drupal_map_assoc(range(2004, 2020));
+  $months = drupal_map_assoc(array('01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'));
+
+
+  $form['cc_number'] =
+    array('#type' => 'textfield',
+	  '#title' => t('Credit Card Number'),
+	  '#default_value' => '',
+	  '#size' => 21,
+	  '#maxlength' => 21,
+	  '#description' => null,
+	  '#attributes' => null,
+	  '#required' => true,
+	  );
+
+  $form['ccv'] =
+    array('#type' => 'textfield', 
+	  '#title' => t('CCV Security Code'),
+	  '#description' => t('The 3 digit number on back of card, or 4 digit number on the front.'),
+	  '#size' => 4,
+	  '#maxlength' => 4,
+	  '#required' => true,
+	  );
+
+  $form['expiry_date'] =
+    array('#type' => 'fieldset',
+	  '#title' => t('Expiration Date'),
+	  );
+
+  $form['expiry_date']['cc_month'] =
+    array('#type' => 'select',
+	  '#title' => t('Month'),
+	  '#default_value' => ($month ? $month : date('m')),
+	  '#options' => $months,
+	  '#description' => null,
+	  '#extra' => 0,
+	  '#multiple' => false,
+	  '#required' => true,
+	  );
+  
+  $form['expiry_date']['cc_year'] =
+    array('#type' => 'select',
+	  '#title' => t('Year'),
+	  '#default_value' => ($year ? $year : date('Y')),
+	  '#options' => $years,
+	  '#description' => null,
+	  '#extra' => 0,
+	  '#multiple' => false,
+	  '#required' => true,
+	  );
+
+  // $form['#method'] = 'POST';
+  // $form['#attributes']['autocomplete'] = 'off';
+  // $form['#action'] = str_replace('http://', 'https://', url("store/payment/quickpay/$txnid", NULL, NULL, TRUE));
+  
+  return $form;
+}
+
+function uc_quickpay_complete($cart_id = 0) {
+  // watchdog('2Checkout', t('Receiving new order notification for order !order_id.', array('!order_id' => check_plain($_POST['merchant_order_id']))));
+
+  $order = uc_order_load($_SESSION['cart_order']);
+
+  if ($order === FALSE || uc_order_status_data($order->order_status, 'state') != 'in_checkout') {
+    print t('An error has occurred during payment.  Please contact us to ensure your order has submitted.');
+    exit();
+  }
+
+  
+  /*
+  if (uc_payment_balance() == 0) {
+    // FIXME: Do we do anything if we're paid?
+  }
+  else {
+    drupal_set_message(t('Your order will be processed as soon as your payment clears at 2Checkout.com.'));
+    uc_order_comment_save($order_id, 0, t('!type payment is pending approval at 2Checkout.com.', array('!type' => $_POST['pay_method'] == 'CC' ? t('Credit card') : t('eCheck'))), 'admin');
+  }
+  */
+  
+  // Empty that cart...
+  uc_cart_empty($cart_id);
+
+  $_SESSION['last_order'] = $order->order_id;
+  $output .= uc_cart_complete_sale($order);
+
+  return $output;
+}
+
+function uc_quickpay_resultpage($order_id) {
+  if (!is_numeric($order_id)) {
+    drupal_access_denied();
+    return;
+  }
+
+  $order = uc_order_load($order_id);
+
+  if ($order === FALSE || uc_order_status_data($order->order_status, 'state') != 'in_checkout') {
+    if ($order === false)
+      watchdog('quickpay', t('Unknown order @order_id in resultpage.',
+			     array('@order' => $order_id)), WATCHDOG_ERROR);
+      else 
+	watchdog('quickpay', t('Order @order_id has wrong state \'@state\'.',
+			       array('@order' => $order->order_id,
+				     '@state' => uc_order_status_data($order->order_status, 'state'))), WATCHDOG_ERROR);
+    return;
+  }
+
+  /* FIXME: check like:
+$order->payment_method == 'quickpay';
+  if ($txn->payment_method != 'ec_quickpay') {
+   watchdog('quickpay', t('Order @txn wasn\'t a QuickPay order',
+			  array('@txn' => $txn->txnid)), WATCHDOG_ERROR);
+   drupal_access_denied();
+   return;
+  } */
+
+  $transaction = quickpay_from_resultpage();
+  if (!$transaction) {
+    // quickpay_from_resultpage already logged it.
+    drupal_access_denied();
+    return;
+  }
+
+  // Empty that cart...
+  //uc_cart_empty(uc_cart_get_id());
+
+  
+  _uc_quickpay_handle_transaction($order, $transaction);
+}
+
+function uc_quickpay_popdown($order_id, $status) {
+  if (!is_numeric($order_id)) {
+    return drupal_access_denied();
+  }
+
+  $order = uc_order_load($order_id);
+
+  if ($order === FALSE || uc_order_status_data($order->order_status, 'state') != 'in_checkout') {
+    if ($order === false)
+      watchdog('quickpay', t('Unknown order @order_id in success page.',
+			     array('@order' => $order_id)), WATCHDOG_ERROR);
+      else 
+	watchdog('quickpay', t('Order @order_id has wrong state \'@state\'.',
+			       array('@order' => $order->order_id,
+				     '@state' => uc_order_status_data($order->order_status, 'state'))), WATCHDOG_ERROR);
+    return;
+  }
+
+  if ($status == 'success') {
+    $url = url('cart/quickpay/complete/' . uc_cart_get_id(), null, null, true);
+  } else { 
+    // FIXME: configurable errorpage?
+    $url = url('cart/checkout/review',
+	       null, null, true);
+  }
+
+  echo '<html><head>
+<script type="text/javascript">
+<!--
+opener.location = "' . $url . '";
+self.close();
+// -->
+</script></head><body></body></html>';
+  return null;
+}
+
+/*******************************************************************************
+ * Internal Functions
+ ******************************************************************************/
+
+function _uc_quickpay_handle_transaction($order, $transaction) {
+  switch (quickpay_result($transaction)) {
+  case 'success': // Accepted
+    // FIXME: check if we're autocapturing and set it completed if that's the
+    // FIXME: case
+    uc_order_comment_save($order->order_id, 0,
+			  t('Payment authorized for !amount.',
+			    array('!amount' => $transaction['amount'])),
+			  'admin');
+    // Log a 0 amount payment, used to get the transaction id later.
+    uc_payment_enter($order->order_id, 'quickpay', 0, 0, array('qp_transaction' => $transaction['transaction']), 'Authorized for ' . $transaction['amount']);
+    watchdog('quickpay',
+	     t('Payment authorized for order %order.',
+	       array('%order' => $order->order_id)), WATCHDOG_NOTICE,
+	     'admin/store/orders/' . $order->order_id);
+    return true;
+    break;
+  case 'failed': // Failed
+    // Handled as denied.
+    uc_order_comment_save($order->order_id, 0,
+			  t('Payment failed, message: %message.',
+			    array('%message' => $transaction['qpstatmsg'])),
+			  'admin');
+    watchdog('quickpay',
+	     t('Payment failed for order %order: %message.',
+	       array('%order' => $order->order_id,
+		     '%message' => $transaction['qpstatmsg'])),
+	     WATCHDOG_NOTICE,
+	     'admin/store/orders/' . $order->order_id);
+    return $transaction['qpstatmsg'];
+    break;
+  case 'error': // Errors
+    // All these are handled as internal error.
+    watchdog('quickpay',
+	     t('Transaction code %code (%message), order %order. Something might be wrong.',
+	       array('%code' => $transaction['qpstat'],
+		     '%order' => $order->order_id,
+		     '%message' => $transaction['message'])), WATCHDOG_ERROR,
+	     'admin/store/orders/' . $order->order_id);
+    uc_order_comment_save($order->order_id, 0,
+			  t('Payment failed with error, code %code message: %message.',
+			    array('%code' => $transaction['qpstat'],
+				  '%message' => $transaction['qpstatmsg'])),
+			  'admin');
+    return null;    
+    break;
+  default:
+    watchdog('quickpay',
+	     t('Unknown transaction code %code for order %order, transaction ignored.',
+	       array('%code' => $transaction['qpstat'],
+		     '%order' => $order->order_id,
+		     '%message' => $transaction['qpstatmsg'])),
+	     WATCHDOG_ERROR, 'admin/store/orders/' . $order->order_id);
+    uc_order_comment_save($order->order_id, 0,
+			  t('Payment failed with unknown transaction code, code %code message: %message.',
+			    array('%code' => $transaction['qpstat'],
+				  '%message' => $transaction['qpstatmsg'])),
+			  'admin');
+    return null;
+  }
+}
+
+function _uc_quickpay_get_last_transaction($order_id) {
+  $payments = uc_payment_load_payments($order_id);
+  if (!$payments)
+    return false;
+  // Loop backwards, in order to get the last.
+  for ($i = sizeof($payments)-1; $i >= 0; $i--) {
+    $payment = drupal_unpack($payments[$i]);
+    if ($payment->qp_transaction) {
+      return $payment;
+    }
+  }
+  return false;
+}

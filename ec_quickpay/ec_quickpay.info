@@ -1,0 +1,6 @@
+; $Id $
+core          = "5.0"
+dependencies  = payment quickpay
+description   = "Process payments using QuickPay."
+package       = "E-Commerce Payment Methods"
+name          = "QuickPay"

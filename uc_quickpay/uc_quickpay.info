@@ -1,0 +1,6 @@
+; $Id$
+name = "Quickpay"
+description = "Enable to process payments using QuickPay.dk."
+dependencies = uc_payment quickpay
+package = Ubercart - payment
+

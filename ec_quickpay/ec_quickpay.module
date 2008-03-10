@@ -1,0 +1,608 @@
+<?
+
+// $Id$
+
+/**
+ * Implementation of menu_hook()
+ */
+function ec_quickpay_menu($may_cache) {
+
+  $items = array();
+  if ($may_cache) {
+    $items[] = array(
+      'path' => 'store/payment/quickpay', 
+      'title' => t('Credit Card Payment'),
+      'callback' => 'drupal_get_form',
+      'callback arguments' => array('ec_quickpay_form'),
+      'access' => true, 
+      'type' => MENU_CALLBACK
+    );
+    $items[] = array(
+      'path' => 'admin/ecsettings/quickpay',
+      'title' => 'QuickPay',
+      'callback' => 'drupal_get_form',
+      'callback arguments' => 'ec_quickpay_settings',
+      'access' => user_access('administer store'),
+      'type' => MENU_NORMAL_ITEM,
+      'description' => t('Configuration for the QuickPay payment gateway'),
+    );
+  } else {
+    if (quickpay_is_hosted()) {
+      $items[] =
+	array('path' => 'quickpay', 
+	      'title' => t('QuickPay resultpage'),
+	      'callback' => 'ec_quickpay_resultpage',
+	      'callback arguments' => array(arg(1)),
+	      'access' => true, 
+	      'type' => MENU_CALLBACK
+	      );
+      if (variable_get('quickpay_hosted_popup', true)) {
+	$items[] =
+	  array('path' => 'quickpay_popdown', 
+		'title' => t('QuickPay popdown page'),
+		// FIXME: add ec_prefix or move to quickpay.module
+		'callback' => 'quickpay_popdown',
+		'callback arguments' => array(arg(1), arg(2)),
+		'access' => true, 
+		'type' => MENU_CALLBACK
+		);
+      }
+    }
+  }
+  return $items;
+}
+
+function ec_quickpay_settings() {
+  $form = system_settings_form(quickpay_settings_form());
+  return $form;
+}
+
+function ec_quickpay_paymentapi(&$txn, $op, $arg = '') {
+  switch ($op) {
+    case 'display name':
+      return t('QuickPay') . "<br />" . theme('quickpay_cards',
+                                   quickpay_supported_cards());
+
+    case 'on checkout':
+      ec_quickpay_verify_checkout($txn);
+      break;
+
+    case 'payment page':
+      if ($txn->gross > 0) {
+        return ec_quickpay_goto($txn);
+      }
+      break;
+    }
+}
+
+function ec_quickpay_form_alter($form_id, &$form) {
+  if ($form_id == 'store_transaction_form') {
+    if ($form['overview'] and
+	$form['overview']['payment_method']['#default_value'] == 'ec_quickpay') {
+      $form['overview']['payment_method']['#description'] =
+	t('<em>WARNING:</em> Changing payment status might lose the QuickPay status. Please cancel the transaction before changing payment method.');
+      $form['overview']['quickpay'] =
+	array('#type' => 'fieldset',
+	      '#title' => t('QuickPay'));
+
+      $transaction = $form['#parameters'][1]->payment->cc_refnum;
+      
+      $form['overview']['quickpay']['admin'] =
+	array('#type' => 'markup',
+	      '#value' => l(t('Quickpay administration'),
+			    'https://secure.quickpay.dk/payments/index.php',
+			    array('target' => 'ec_quickpay'),
+			    'searchType=word&keyword=' . $transaction .
+			    '&transaction=1&showDeleted=0'));
+			    
+      $payment_status = $form['overview']['payment_status']['#default_value'];
+      if ($payment_status == 7) {
+	// payment received.
+	// capture
+	$form['overview']['quickpay']['capture'] =
+	  array('#type' => 'submit',
+		'#value' => t('Capture'));
+	// reverse
+	$form['overview']['quickpay']['reverse'] =
+	  array('#type' => 'submit',
+		'#value' => t('Reverse'));
+      }
+      $form['#submit']['ec_quickpay_transaction_submit'] = array();
+    }
+  }
+}
+
+function ec_quickpay_transaction_submit($form_id, $form_values) {
+  if ($form_values['op'] == t('Capture') or 
+      $form_values['op'] == t('Reverse')) {
+    $txn = store_transaction_load($form_values['txnid']);
+    $payment = $txn->payment;
+    if ($form_values['op'] == t('Capture')) {
+      $qptxn = quickpay_capture(array('transaction' => $payment->cc_refnum),
+				$payment->cc_amount);
+      if (quickpay_successful($qptxn)) {
+	drupal_set_message(t('Successfully captured.'));
+	store_transaction_save(array('txnid' => $txn->txnid,
+				     'payment_method' => 'ec_quickpay',
+				     'payment' => $payment,
+				     'payment_status' =>
+				     payment_get_status_id('completed')));
+      } else {
+	$error = _quickpay_qpstat_codes($qptxn['qpstat']);
+	drupal_set_message(t('Capture failed, reason given: %error',
+			     array('%error' => $error)), 'error');
+	store_transaction_save(array('txnid' => $txn->txnid,
+				     'payment_method' => 'ec_quickpay',
+				     'payment' => $payment,
+				     'payment_status' =>
+				     payment_get_status_id('failed')));
+      }
+    } elseif ($form_values['op'] == t('Reverse')) {
+      $qptxn = quickpay_reverse(array('transaction' => $payment->cc_refnum));
+      if (quickpay_successful($qptxn)) {
+	drupal_set_message(t('Successfully reversed.'));
+	store_transaction_save(array('txnid' => $txn->txnid,
+				     'payment_method' => 'ec_quickpay',
+				     'payment' => $payment,
+				     'payment_status' =>
+				     payment_get_status_id('canceled')));
+      } else {
+	$error = _quickpay_qpstat_codes($qptxn['qpstat']);
+	drupal_set_message(t('Reversal failed, reason given: %error',
+			     array('%error' => $error)), 'error');
+	store_transaction_save(array('txnid' => $txn->txnid,
+				     'payment_method' => 'ec_quickpay',
+				     'payment' => $payment,
+				     'payment_status' =>
+				     payment_get_status_id('failed')));
+      }
+    }
+    $dest = drupal_get_destination();
+    unset($_REQUEST['destination'], $_REQUEST['edit']['destination']);
+    return array('admin/store/transaction/edit/'. $form_values['txnid'],
+		 $dest . '&section=' . $_GET['section']);
+  }
+}
+
+/**
+ * Called immediately after the user has clicked the checkout button.
+ *
+ * Redirect the user to the local payment page, which will either present a
+ * form for going to QuickPays hosted page, or (if SSL) present a local form.
+ */
+function ec_quickpay_goto($txn) {
+  global $base_url;
+  if (quickpay_is_hosted()) {
+    $payment_url = url('store/payment/quickpay/'. $txn->txnid, NULL, NULL, TRUE);
+  } else {
+    $payment_url = str_replace('http://', 'https://', url('store/payment/quickpay/'. $txn->txnid, NULL, NULL, TRUE));
+  }
+  drupal_goto($payment_url);
+  exit();
+}
+
+
+/**
+ * Implementation of hook_ec_transactionapi().
+ */
+function ec_quickpay_ec_transactionapi(&$txn, $op, $a3 = NULL, $a4 = NULL) {
+  if ($txn->payment_method != 'ec_quickpay') return NULL;
+  switch ($op) {
+    case 'load':
+      $txn->payment = db_fetch_object(db_query("SELECT * FROM {ec_credit_card} WHERE txnid = %d", $txn->txnid));
+      break;
+    case 'insert':
+    case 'update':
+      payment_cc_save($txn);
+      break;
+    case 'delete':
+      payment_cc_delete($txn);
+      break;
+  }
+}
+
+function ec_quickpay_verify_checkout($txn) {
+  $estimate = store_transaction_calc_gross($txn);
+  // Not sure this is strictly needed, but might as well
+  if (0 > $estimate) {
+    form_set_error('gross', t('Your purchase total must be at least %min-purchase-amount for QuickPay purchases.', array('%min-purchase-amount' => payment_format('0.00'))));
+  }
+}
+
+/**
+ * Build the credit card form.
+ */
+function ec_quickpay_form($txnid, $error = null) {
+  global $user, $base_url;
+
+  $txn = store_transaction_load($txnid);
+
+  // Make sure the user owns the transaction or is an admin.
+  if ($user->uid != $txn->uid && $user->uid != 1  && !user_access('administer store')) {
+    return drupal_access_denied();
+  }
+
+  if ($error) {
+    drupal_set_message("QuickPay didn't approve the payment, please try again.", 'error');
+  }
+  
+  // Build a list of items to show the user
+  if ($txn->items) {
+    foreach ($txn->items as $p) {
+      $subtotal += $p->qty * $p->price;
+      $items[] = t('%order of <b>%title</b> at %price each',
+		   array('%order' =>
+			 format_plural($p->qty, '1 order', '@count orders'),
+			 '%title' => $p->title,
+			 '%price' => payment_format($p->price)));
+    }
+  }
+  /*
+  $form['help'] = array('#value' => t('<div class="help">%authorize_net_help</div>', array('%authorize_net_help' => variable_get('authorize_net_help', authorize_net_help('authorize_net/form_submit_guidlines')))));
+  */
+  $form['items'] = array('#value' => theme('item_list', $items, t('Your items')). '</p>');
+
+  
+  if (quickpay_is_hosted()) {
+    // Build the form to send them to quickpay.
+    $form['information'] =
+      array('#type' => 'markup',
+	    '#value' => t(variable_get('quickpay_hosted_link_message', 'In order to complete the payment, continue to QuickPay to enter your credit card information.')),
+	    '#weight' => -1,
+	    );
+    
+    // FIXME: work together with i18n
+    $form['language'] = array('#type' => 'hidden',
+			      '#value' => variable_get('quickpay_hosted_language', 'en'));
+    // FIXME: should depend on whether order needs shipping
+    $form['autocapture'] = array('#type' => 'hidden', '#value' => '0');
+    $form['ordernum'] = array('#type' => 'hidden', '#value' => variable_get('quickpay_order_prefix', '') . $txn->txnid);
+    list($amount, $currency) = _quickpay_validate_amount(store_transaction_calc_gross($txn), variable_get('quickpay_default_currency', ''));
+    if (!$currency) {
+      // FIXME: better error handling.
+      drupal_set_message(t('Internal error.'));
+      drupal_not_found();
+      return;
+    }
+    $form['amount'] = array('#type' => 'hidden', '#value' => $amount);
+    // FIXME: any other option than using default currency?
+    $form['currency'] = array('#type' => 'hidden', '#value' => $currency);
+    $form['merchant'] = array('#type' => 'hidden', '#value' =>
+			      variable_get('quickpay_merchant', ''));
+
+      
+    $form['resultpage'] = array('#type' => 'hidden', '#value' =>
+				url('quickpay/' . $txn->txnid, null, null,
+				    true));
+  
+    $form['okpage'] = array('#type' => 'hidden', '#value' =>
+			    url(quickpay_success_url($txn), null, null, true));
+    // FIXME: configurable errorpage?
+    $form['errorpage'] = array('#type' => 'hidden', '#value' =>
+			       url('store/payment/quickpay/' . $txn->txnid .
+				   '/error', null, null, true));
+
+    $form['md5checkV2'] = array('#type' => 'hidden', '#value' =>
+				md5($form['language']['#value'] .
+				    $form['autocapture']['#value'] .
+				    $form['ordernum']['#value'] .
+				    $form['amount']['#value'] .
+				    $form['currency']['#value'] .
+				    $form['merchant']['#value'] .
+				    $form['okpage']['#value'] .
+				    $form['errorpage']['#value'] .
+				    $form['resultpage']['#value'] .
+				    /* $form['ccipage']['#value'] . */
+				    variable_get('quickpay_secret', ''))
+				    );
+    
+    $form['submit'] =
+      array('#type' => 'submit',
+	    '#value' => t(variable_get('quickpay_hosted_link_button',
+				       'Continue to QuickPay')),
+	    );
+
+    $form['#method'] = 'POST';
+    // The oddity of setting the return urls by JavaScript, ensures that
+    // we're only using the JavaScript requiring popdown page if JavaScript is
+    // enabled.
+    $ok_url = url('quickpay_popdown/' . $txn->txnid . '/success', null,
+		  null, true);
+    $error_url = url('quickpay_popdown/' . $txn->txnid . '/error', null,
+		     null, true);
+    $new_md5 = md5($form['language']['#value'] .
+		   $form['autocapture']['#value'] .
+		   $form['ordernum']['#value'] .
+		   $form['amount']['#value'] .
+		   $form['currency']['#value'] .
+		   $form['merchant']['#value'] .
+		   $ok_url . $error_url .
+		   $form['resultpage']['#value'] .
+		   /* $form['ccipage']['#value'] . */
+		   variable_get('quickpay_secret', ''));
+
+    if (variable_get('quickpay_hosted_popup', true)) {
+      //$form['#attributes']['target'] = 'quickpay_payment';
+      $js = <<<EOF
+	$(document).ready(function() {
+	  $('#ec-quickpay-form').submit(function() {
+	    var left = (screen.width) ? (screen.width-500)/2 : 0;
+	    var top = (screen.height) ? (screen.height-300)/2 : 0;
+	    $(this).find('#edit-okpage').val('$ok_url');
+	    $(this).find('#edit-errorpage').val('$error_url');
+	    $(this).find('#edit-md5checkV2').val('$new_md5');
+	    window.open('','quickpay_payment', 'top=' + top + ',left=' + left + ',height=300,width=500,scrollbars=yes,statusbar=yes,toolbars=no,location=0');
+	    $(this).attr('target', 'quickpay_payment');
+	    return true;
+	  });
+	});
+EOF;
+      drupal_add_js($js, 'inline');
+    }
+    // FIXME: Make quickpay.php url settable?
+    $form['#action'] = 'https://secure.quickpay.dk/quickpay.php';
+  } else {
+    // Make sure the user is connected via SSL
+    if (!$_SERVER['HTTPS']) {
+      drupal_access_denied();
+      return;
+    }
+
+    // Prepare the values of the form fields.
+    $years  = drupal_map_assoc(range(2004, 2020));
+    $months = drupal_map_assoc(array('01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'));
+
+    $form['details'] = array(
+			     '#type' => 'fieldset',
+			     '#title' => t('Card details'),
+			     );
+
+    $form['details']['cc_number'] = array(
+					  '#type' => 'textfield',
+					  '#title' => t('Credit Card Number'),
+					  '#default_value' => '',
+					  '#size' => 21,
+					  '#maxlength' => 21,
+					  '#description' => null,
+					  '#attributes' => null,
+					  '#required' => true,
+					  );
+
+    $form['details']['ccv'] = array(
+				    '#type' => 'textfield', 
+				    '#title' => t('CCV Security Code'),
+				    '#description' => t('The 3 digit number on back of card, or 4 digit number on the front.'),
+				    '#size' => 4,
+				    '#maxlength' => 4,
+				    '#required' => true,
+				    );
+
+    $form['details']['expiry_date'] = array(
+				 '#type' => 'fieldset',
+				 '#title' => t('Expiration Date'),
+				 );
+    $form['details']['expiry_date']['cc_month'] = array(
+					     '#type' => 'select',
+					     '#title' => t('Month'),
+					     '#default_value' => ($month ? $month : date('m')),
+					     '#options' => $months,
+					     '#description' => null,
+					     '#extra' => 0,
+					     '#multiple' => false,
+					     '#required' => true,
+					     );
+    $form['details']['expiry_date']['cc_year'] = array(
+					    '#type' => 'select',
+					    '#title' => t('Year'),
+					    '#default_value' => ($year ? $year : date('Y')),
+					    '#options' => $years,
+					    '#description' => null,
+					    '#extra' => 0,
+					    '#multiple' => false,
+					    '#required' => true,
+					    );
+
+    $form['txnid'] = array(
+			   '#type' => 'value',
+			   '#value' => $txnid,
+			   );
+
+    $form['submit'] = array(
+			    '#type' => 'submit',
+			    '#value' => t('Place your order'),
+			    );
+
+    $form['#method'] = 'POST';
+    $form['#attributes']['autocomplete'] = 'off';
+    $form['#action'] = str_replace('http://', 'https://', url("store/payment/quickpay/$txnid", NULL, NULL, TRUE));
+  }
+  
+  return $form;
+}
+
+function ec_quickpay_form_submit($form_id, $form_values) {
+  if (!quickpay_is_hosted()) {
+    $payment_url = str_replace('http://', 'https://',
+			       url('store/payment/quickpay/'. $form_values['txnid'], NULL, NULL, TRUE));
+
+    $txn = store_transaction_load($form_values['txnid']);
+    global $user;
+    // Make sure the user owns the transaction or is an admin.
+    if ($user->uid != $txn->uid && $user->uid != 1 &&
+	!user_access('administer store')) {
+      return drupal_access_denied();
+    }
+    // Make sure the user is connected via SSL
+    // This is basically to late, this is just to get the point across.
+    if (!$_SERVER['HTTPS']) {
+      drupal_access_denied();
+      return;
+    }
+    // FIXME: This should be moved to _validate in order to be able to
+    // FIXME: present the form prefilled for the user on error.
+    // FIXME: Secondly, do rudimentary check of input.
+    $carddata = array('number' => $form_values['cc_number'],
+		      'exp_month' => $form_values['cc_month'],
+		      'exp_year' => substr($form_values['cc_year'], -2),
+		      'cvd' => $form_values['ccv']);
+    $amount = store_transaction_calc_gross($txn);
+    $transaction = quickpay_authorize($carddata, $txn->txnid,
+				      $amount);
+    
+    $payment = new StdClass;
+    $payment->cc_amount = store_transaction_calc_gross($txn);
+    $payment->cc_refnum = $transaction['transaction'];
+    $payment->cc_ordernum = $transaction['ordernumber'];
+    $codes = _quickpay_qpstat_codes();
+    $payment->cc_reason = $transaction['qpstat'] . ": " . $codes[$qpstat];
+
+    $res = _ec_quickpay_handle_transaction($txn, $payment, $transaction);
+    if ($res === true) {
+      if ($message = quickpay_api_success_message($txn))
+	drupal_set_message($message);
+      // we don't redirect back to non-SSL, as the shop might be all SSL.
+      /* $goto = str_replace('https://', 'http://',
+			  url(quickpay_success_url($txn), null, null, true));
+      */
+      drupal_goto(quickpay_success_url($txn));
+    } elseif ($res === null) {
+      drupal_set_message(t('Payment failed.'), 'error');
+      drupal_goto($payment_url);
+      return;
+    } else {
+      drupal_set_message(t('Payment failed, description: "%error"', array('%error' => $res)), 'error');
+      drupal_goto($payment_url);
+      return;
+    }
+  }
+}
+
+function quickpay_popdown($txnid, $status) {
+  global $user;
+  if (!is_numeric($txnid)) {
+    return drupal_access_denied();
+  }
+
+  $txn = store_transaction_load($txnid);
+
+  // Make sure the user owns the transaction or is an admin.
+  if ($user->uid != $txn->uid && $user->uid != 1  &&
+      !user_access('administer store')) {
+    return drupal_access_denied();
+  }
+
+
+  if ($status == 'success') {
+    $url = url(quickpay_success_url($txn), null, null, true);
+  } else { 
+    // FIXME: configurable errorpage?
+    $url = url('store/payment/quickpay/' . $txn->txnid . '/error',
+	       null, null, true);
+  }
+
+  echo '<html><head>
+<script type="text/javascript">
+<!--
+opener.location = "' . $url . '";
+self.close();
+// -->
+</script></head><body></body></html>';
+  return null;
+}
+
+function ec_quickpay_resultpage($txnid) {
+  if (!is_numeric($txnid)) {
+    drupal_access_denied();
+    return;
+  }
+  
+  $txn = store_transaction_load($txnid);
+  if (!$txn) {
+    drupal_access_denied();
+    return;
+  }
+
+  if ($txn->payment_method != 'ec_quickpay') {
+   watchdog('quickpay', t('Order @txn wasn\'t a QuickPay order',
+			  array('@txn' => $txn->txnid)), WATCHDOG_ERROR);
+   drupal_access_denied();
+   return;
+  }
+
+  $transaction = quickpay_from_resultpage();
+  if (!$transaction) {
+    // quickpay_from_resultpage already logged it.
+    drupal_access_denied();
+    return;
+  }
+  
+  $payment = new StdClass;
+  $payment->cc_amount = $transaction['amount'];
+  $payment->cc_refnum = $transaction['transaction'];
+  $payment->cc_ordernum = $transaction['ordernum'];
+  $codes = _quickpay_qpstat_codes();
+  $payment->cc_reason = $transaction['qpstat'] . ": " .
+    $codes[$transaction['qpstat']];
+
+  _ec_quickpay_handle_transaction($txn, $payment, $transaction);
+}
+
+function _ec_quickpay_handle_transaction($txn, $payment, $transaction) {
+  switch (quickpay_result($transaction)) {
+  case 'success': // Accepted
+    // FIXME: check if we're autocapturing and set it completed if that's the
+    // FIXME: case
+    store_transaction_save(array('txnid' => $txn->txnid,
+				 'payment_method' => 'ec_quickpay',
+				 'payment' => $payment,
+				 'payment_status' =>
+				 payment_get_status_id('payment received'))); 
+    watchdog('quickpay',
+	     t('Payment authorized for transaction %txn.',
+	       array('%txn' => $txn->txnid)), WATCHDOG_NOTICE,
+	     'admin/store/transaction/edit/' . $txn->txnid .
+	     '&section=overview');
+    return true;
+    break;
+  case 'failed': // Failed
+    // Handled as denied.
+    store_transaction_save(array('txnid' => $txn->txnid,
+				 'payment_method' => 'ec_quickpay',
+				 'payment' => $payment,
+				 'payment_status' =>
+				 payment_get_status_id('failed')));
+    watchdog('quickpay',
+	     t('Payment failed for transaction %txn: %message.',
+	       array('%txn' => $txn->txnid,
+		     '%message' => $transaction['qpstatmsg'])),
+	     WATCHDOG_NOTICE,
+	     'admin/store/transaction/edit/' . $txn->txnid .
+	     '&section=overview');
+    return $transaction['qpstatmsg'];
+    break;
+  case 'error': // Errors
+    // All these are handled as internal error.
+    watchdog('quickpay',
+	     t('Transaction code %code (%message), transaction %txn is set failed, but something might be wrong.',
+	       array('%code' => $transaction['qpstat'], '%txn' => $txn->txnid,
+	       '%message' => $transaction['message'])), WATCHDOG_ERROR,
+	     'admin/store/transaction/edit/' . $txn->txnid .
+	     '&section=overview');
+    store_transaction_save(array('txnid' => $txn->txnid,
+				 'payment_method' => 'ec_quickpay',
+				 'payment' => $payment,
+				 'payment_status' =>
+				 payment_get_status_id('failed')));
+    return null;    
+    break;
+  default:
+    watchdog('quickpay',
+	     t('Unknown transaction code %code for transaction %txn, transaction ignored.',
+	       array('%code' => $transaction['qpstat'],
+		     '%txn' => $txn->txnid,
+		     '%message' => $transaction['qpstatmsg'])),
+	     WATCHDOG_ERROR, 'admin/store/transaction/edit/' . $txn->txnid .
+	     '&section=overview');
+    return null;
+  }
+}
