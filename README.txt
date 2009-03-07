@@ -72,7 +72,7 @@ SUPPORTED FEATURES
 AS YET UNSUPPORTED FEATURES
 ====================
 * eDankort
-* Payment by netbank (Danske Bank, Nodea)
+* Payment by netbank (Danske Bank, Nordea)
 * Autocapture
 * Subscriptions, for both ECommerce and Ubercard (supported by core API)
 * Custom HTML template (ccipage).

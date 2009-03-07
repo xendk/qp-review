@@ -2,3 +2,4 @@
 core          = "5.0"
 description   = "Process payments using QuickPay. Core module required by shop dependant modules."
 name          = "QuickPay core"
+package       = "QuickPay payment gateway"
