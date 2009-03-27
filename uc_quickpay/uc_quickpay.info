@@ -1,6 +1,7 @@
 ; $Id$
-name = "Quickpay Ubercart"
-description   = "Process Ubercart payments using QuickPay."
-dependencies = uc_payment quickpay
+name = "Quickpay Ubercart 2"
+description   = "Process Ubercart 2 payments using QuickPay."
+dependencies[] = uc_payment
+dependencies[] = quickpay
 package       = "QuickPay payment gateway"
-
+core = 6.x

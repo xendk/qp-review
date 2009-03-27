@@ -1,5 +1,5 @@
 ; $Id $
-core          = "5.0"
+core          = 6.x
 description   = "Process payments using QuickPay. Core module required by shop dependant modules."
 name          = "QuickPay core"
 package       = "QuickPay payment gateway"

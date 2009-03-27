@@ -5,27 +5,24 @@ define('QUICKPAY_VERSION', '3');
 /**
  * Implementation of hook_menu().
  */
-function quickpay_menu($may_cache) {
-  if (!$may_cache) {
-    $items[] = array(
-      'path' => 'quickpay',
-      'title' => t('QuickPay callback page'),
-      'callback' => 'quickpay_callback',
-      'callback arguments' => array(arg(1)),
-      'access' => TRUE,
-      'type' => MENU_CALLBACK
-    );
-  }
-  if (variable_get('quickpay_hosted_popup', TRUE)) {
-    $items[] = array(
-      'path' => 'quickpay_popdown',
-      'title' => t('QuickPay popdown page'),
-      'callback' => 'quickpay_popdown',
-      'callback arguments' => array(arg(1), arg(2)),
-      'access' => TRUE,
-      'type' => MENU_CALLBACK
-    );
-  }
+function quickpay_menu() {
+  $items['quickpay'] = array(
+    'title' => 'QuickPay callback page',
+    'page callback' => 'quickpay_callback',
+    'page arguments' => array(1),
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
+  );
+
+  $items['quickpay_popdown'] = array(
+    'title' => 'QuickPay popdown page',
+    'page callback' => 'quickpay_popdown',
+    'page arguments' => array(1, 2),
+    'access callback' => 'variable_get',
+    'access arguments' => array('quickpay_hosted_popup', TRUE),
+    'type' => MENU_CALLBACK,
+  );
+
   return $items;
 }
 
@@ -96,7 +93,7 @@ function quickpay_settings_form() {
     '#title' => t('Order id prefix'),
     '#description' => t('Prefix for order ids. Order ids must be uniqe when sent to QuickPay, use this to resolve clashes.'),
     '#default_value' => variable_get('quickpay_order_prefix', ''),
-    '#validate' => array('quickpay_order_prefix_validate' => array()),
+    '#element_validate' => array('quickpay_order_prefix_validate'),
   );
 
   $options = array();
@@ -160,7 +157,7 @@ function quickpay_settings_form() {
     '#default_value' => variable_get('quickpay_success_url', 'node'),
     '#size' => 40,
     '#description' => t('After successful payment, logged in customers will be sent to this page. It\'s recommened that this is a page that makes it obvious to the customer that the transaction was successful, unless the API success message is used. Available variables are: !uid, !transaction_id.'),
-    '#field_prefix' => url(NULL, NULL, NULL, TRUE) . (variable_get('clean_url', 0) ? '' : '?q=')
+    '#field_prefix' => url(NULL, array('absolute' => TRUE)) . (variable_get('clean_url', 0) ? '' : '?q=')
   );
 
   $form['quickpay_success_url_anon'] = array(
@@ -169,13 +166,13 @@ function quickpay_settings_form() {
     '#default_value' => variable_get('quickpay_success_url_anon', 'node'),
     '#size' => 40,
     '#description' => t('After successful payment, anonymous customers will be sent to this page. It\'s recommened that this is a page that makes it obvious to the customer that the transaction was successful, unless the API success message is used. '),
-    '#field_prefix' => url(NULL, NULL, NULL, TRUE) . (variable_get('clean_url', 0) ? '' : '?q=')
+    '#field_prefix' => url(NULL, array('absolute' => TRUE)) . (variable_get('clean_url', 0) ? '' : '?q=')
   );
 
   return $form;
 }
 
-function quickpay_order_prefix_validate($element) {
+function quickpay_order_prefix_validate($element, &$form_state) {
   if (!preg_match('/^[a-zA-Z0-9]{0,15}$/', $element['#value'])) {
     form_error($element, t('Order prefix must only contain alphanumerics and no longer than 15 characters.'));
   }
@@ -236,6 +233,15 @@ function quickpay_block($op = 'list', $delta = 0, $edit = array()) {
 function quickpay_supported_cards() {
   return quickpay_cards(variable_get('quickpay_accepted_cards', array('dan')));
 }
+
+function quickpay_theme() {
+  return array(
+    'quickpay_cards' => array(
+      'arguments' => array('cards' => array()),
+    ),
+  );
+}
+
 
 function theme_quickpay_cards($cards) {
   drupal_add_css(drupal_get_path('module', 'quickpay') . '/quickpay.css');
@@ -375,7 +381,7 @@ function quickpay_hosted_form($amount, $order_id, $form_id, $continue_url,
   // $data['ipaddress'];
   // $data['testmode'];
   // $data['CUSTOM_*'];
-  
+
   $md5_string = "";
   foreach ($md5_order as $field) {
     $md5_string .= $data[$field];
@@ -400,10 +406,8 @@ function quickpay_hosted_form($amount, $order_id, $form_id, $continue_url,
   // enabled.
   // This assumes that the module implements hook_quickpay_popdown.
   // And we need to recalculate the md5 sum as the data changed.
-  $data['continueurl'] = url('quickpay_popdown/' . $order_id . '/success', NULL,
-                             NULL, TRUE);
-  $data['cancelurl'] = url('quickpay_popdown/' . $order_id . '/cancel', NULL,
-                           NULL, TRUE);
+  $data['continueurl'] = url('quickpay_popdown/' . $order_id . '/success', array( 'absolute' => TRUE));
+  $data['cancelurl'] = url('quickpay_popdown/' . $order_id . '/cancel', array('absolute' => TRUE));
   $md5_string = "";
   foreach ($md5_order as $field) {
     $md5_string .= $data[$field];
@@ -417,14 +421,14 @@ function quickpay_hosted_form($amount, $order_id, $form_id, $continue_url,
     $js = <<<EOF
       $(document).ready(function() {
           $('#$form_id').submit(function() {
-              var left = (screen.width) ? (screen.width-500)/2 : 0;
-              var top = (screen.height) ? (screen.height-600)/2 : 0;
+              var left = (screen.width) ? (screen.width-670)/2 : 0;
+              var top = (screen.height) ? (screen.height-500)/2 : 0;
               $(this).find('#edit-continueurl').val('$continueurl');
               $(this).find('#edit-cancelurl').val('$cancelurl');
               $(this).find('#edit-md5check').val('$md5check');
-              window.open('','quickpay_payment', 'top=' + top + ',left=' + left + ',height=600,width=500,scrollbars=yes,toolbars=no,statusbar=yes,location=0');
+              window.open('','quickpay_payment', 'top=' + top + ',left=' + left + ',height=500,width=670,scrollbars=yes,toolbars=no,statusbar=yes,location=0');
               $(this).attr('target', 'quickpay_payment');
-              return TRUE;
+              return true;
             });
         });
 EOF;
@@ -492,7 +496,7 @@ function quickpay_from_callback() {
     'cardtype',
     'cardnumber',
   );
-  
+
   // Check that it validates.
   $md5_string = "";
   foreach ($md5_order as $field) {
@@ -500,7 +504,7 @@ function quickpay_from_callback() {
   }
   if (md5($md5_string . variable_get('quickpay_secret', '')) !=
           $_POST['md5check']) {
-    watchdog('quickpay', t('Transaction callback md5 didn\'t verify.'),
+    watchdog('quickpay', 'Transaction callback md5 didn\'t verify.',
              WATCHDOG_ERROR);
     return NULL;
   }
