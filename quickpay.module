@@ -77,17 +77,6 @@ function quickpay_settings_form() {
     '#required' => TRUE,
   );
 
-  // TODO: Make this nicer
-  $form['quickpay_default_currency'] = array(
-    '#type' => 'select',
-    '#title' => t('Default currency'),
-    '#description' => t('The default currency for transactions.'),
-    '#options' => array('DKK' => 'DKK', 'USD' => 'USD', 'EUR' => 'EUR',
-                        'GBP' => 'GBP'),
-    '#default_value' => variable_get('quickpay_default_currency', 'DKK'),
-    '#required' => TRUE,
-  );
-
   $form['quickpay_order_prefix'] = array(
     '#type' => 'textfield',
     '#title' => t('Order id prefix'),
@@ -123,6 +112,7 @@ function quickpay_settings_form() {
     '#description' => t('Whether to show the credit card from in a popup window.'),
   );
 
+  // FIXME: Remove, not used anymore.
   $form['hosted']['quickpay_hosted_link_message'] = array(
     '#type' => 'textfield',
     '#title' => t('Link page message'),
@@ -151,6 +141,7 @@ function quickpay_settings_form() {
   );
 
 
+  // FIXME: Not used by UC
   $form['quickpay_success_url'] = array(
     '#type' => 'textfield',
     '#title' => t('Page to show logged in customers on successful payment.'),
@@ -160,6 +151,7 @@ function quickpay_settings_form() {
     '#field_prefix' => url(NULL, array('absolute' => TRUE)) . (variable_get('clean_url', 0) ? '' : '?q=')
   );
 
+  // FIXME: Not used by UC
   $form['quickpay_success_url_anon'] = array(
     '#type' => 'textfield',
     '#title' => t('Page to show anonymous customers on successful payment.'),
@@ -320,7 +312,7 @@ self.close();
 /**
  * Returns the form for redirecting users to quickpay.
  */
-function quickpay_hosted_form($amount, $order_id, $form_id, $continue_url,
+function quickpay_hosted_form($amount, $currency, $order_id, $form_id, $continue_url,
                               $cancel_url, $callback_url) {
   $md5_order = array(
     'protocol',
@@ -353,10 +345,8 @@ function quickpay_hosted_form($amount, $order_id, $form_id, $continue_url,
     $data['ordernumber'] = $prefix . substr('0000' . $order_id,
                                             -4+strlen($prefix));
   }
-  // FIXME: Caller should specify currency too.
   list($amount, $currency) =
-    _quickpay_validate_amount($amount,
-                              variable_get('quickpay_default_currency', ''));
+    _quickpay_validate_amount($amount, $currency);
   if (!$currency) {
     // FIXME: better error handling.
     drupal_set_message(t('Internal error.'));
@@ -436,6 +426,14 @@ EOF;
   }
   return $form;
 }
+
+/**
+ * Helper function returns all supported currencies.
+ */
+function quickpay_supported_currencies() {
+  return array_keys(_quickpay_currencies());
+}
+
 
 // --- Core API functions ---
 
@@ -670,6 +668,16 @@ function quickpay_status($txn) {
 // --- Internal functions ---
 
 /**
+ * Currencies and their multipliers. Internal use only.  Used by other
+ * functions as a central place for currency information.
+ */
+function _quickpay_currencies() {
+  static $currencies = array('DKK' => 100, 'USD' => 100, 'EUR' => 100,
+                             'GBP' => 100);
+  return $currencies;
+}
+
+/**
  * Utility function to convert a $carddata object/array to a proper
  * request array. Internal use only.  Card data is an array/object
  * with the following keys/properties:
@@ -862,8 +870,7 @@ function _quickpay_response($response) {
  * @todo Check up against http://www.iso.org/iso/support/faqs/faqs_widely_used_standards/widely_used_standards_other/currency_codes/currency_codes_list-1.htm
  */
 function _quickpay_validate_currency($currency) {
-  static $currencies = array('DKK' => 100, 'USD' => 100, 'EUR' => 100,
-                             'GBP' => 100);
+  $currencies = _quickpay_currencies();
   return $currencies[$currency];
 }
 

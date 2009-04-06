@@ -29,6 +29,12 @@ function uc_quickpay_menu() {
   return $items;
 }
 
+function uc_quickpay_init() {
+  if (!in_array(variable_get('uc_currency_code', ''), quickpay_supported_currencies())) {
+    drupal_set_message(t('WARNING: Übercart is set to use a currency not supported by QuickPay.'), 'error');
+  }
+}
+
 /**
  * Implementation of hook_form_alter().
  */
@@ -209,7 +215,6 @@ function uc_payment_method_quickpay($op, &$arg1) {
       // Disable some options we're not using.
       $form['quickpay_success_url']['#type'] = 'value';
       $form['quickpay_success_url_anon']['#type'] = 'value';
-      $form['quickpay_default_currency']['#description'] .= t('<em>WARNING:</em> This should be the same as the configured &Uuml;bercart currency.');
       return $form;
     case 'order-delete':
       // FIXME: Delete associated transactions?
@@ -219,6 +224,7 @@ function uc_payment_method_quickpay($op, &$arg1) {
 // Form to build the submission to quickpay.dk
 function uc_quickpay_form(&$form_state, $order) {
   $form = quickpay_hosted_form($order->order_total,
+                               variable_get('uc_currency_code', ''),
                                $order->order_id,
                                'uc-quickpay-form',
                                url('cart/quickpay/complete/' .

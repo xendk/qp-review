@@ -43,12 +43,6 @@ a look at ec_quickpay and uc_quickpay for example code.
 IMPLEMENTATION
 ==============
 
-Using the HTML template method is recommended, and also the easiest to
-implement.
-
-The API version requires an SSL certificate for the server, and
-approval from QuickPay/PBS.
-
 The core module provides a block to show the accepted credit cards, as
 required by PBS. Note that it doesn't enforce payments to only use
 those cards.
@@ -61,27 +55,12 @@ setting. As a convenience the modules sets $_SESSION['last_order'] to
 the id of the last successful order in this session, which allows the
 page to display an appropriate confirmation page.
 
-SUPPORTED FEATURES
-==================
-
-* Payment by all common credit cards (as supported by QuickPay).
-* API method.
-* HTML template method.
-* Language selection for HTML template method.
-
 AS YET UNSUPPORTED FEATURES
 ====================
-* eDankort
-* Payment by netbank (Danske Bank, Nordea)
 * Autocapture
 * Subscriptions, for both ECommerce and Ubercard (supported by core API)
-* Custom HTML template (ccipage).
 
 AUTHOR / MAINTAINER
 ===================
 Thomas Fini Hansen (aka Xen.dk on Drupal.org)
 xen at xen dot dk
-
-
-
-
