@@ -212,9 +212,6 @@ function uc_payment_method_quickpay($op, &$arg1) {
       return;
     case 'settings':
       $form = quickpay_settings_form();
-      // Disable some options we're not using.
-      $form['quickpay_success_url']['#type'] = 'value';
-      $form['quickpay_success_url_anon']['#type'] = 'value';
       return $form;
     case 'order-delete':
       // FIXME: Delete associated transactions?
@@ -324,7 +321,7 @@ function uc_quickpay_complete($cart_id = 0) {
   uc_cart_empty($cart_id);
 
   $_SESSION['last_order'] = $order->order_id;
-  $output .= uc_cart_complete_sale($order);
+  $output .= uc_cart_complete_sale($order, variable_get('uc_new_customer_login', FALSE));
 
   return $output;
 }
