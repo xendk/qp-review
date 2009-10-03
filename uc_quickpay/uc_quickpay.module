@@ -29,6 +29,11 @@ function uc_quickpay_menu() {
   return $items;
 }
 
+/**
+ * Implementation of hook_init().
+ *
+ * Big warning if UC isn't configured with a supported currency.
+ */
 function uc_quickpay_init() {
   if (!in_array(variable_get('uc_currency_code', ''), quickpay_supported_currencies())) {
     drupal_set_message(t('WARNING: Übercart is set to use a currency not supported by QuickPay.'), 'error');
@@ -103,7 +108,7 @@ function uc_quickpay_form_alter(&$form, &$form_state, $form_id) {
 }
 
 function uc_quickpay_transaction_submit($form, &$form_state) {
-  // FIXME: Rewrite to a switch or seperate into 2.
+  // FIXME: Rewrite to a switch or separate into 2.
   $order = uc_order_load($form_state['values']['order_id']);
   $payment = _uc_quickpay_get_last_transaction($order->order_id);
   // FIXME: use _uc_quickpay_handle_transaction here...
@@ -231,77 +236,13 @@ function uc_quickpay_form(&$form_state, $order) {
   return $form;
 }
 
-function uc_quickpay_card_form() {
-  // Extra safety check.
-  if (!$_SERVER['HTTPS']) {
-    return;
-  }
-
-  // Prepare the values of the form fields.
-  $years  = drupal_map_assoc(range(2004, 2020));
-  $months = drupal_map_assoc(array('01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'));
-
-
-  $form['cc_number'] =
-    array('#type' => 'textfield',
-          '#title' => t('Credit Card Number'),
-          '#default_value' => '',
-          '#size' => 21,
-          '#maxlength' => 21,
-          '#description' => NULL,
-          '#attributes' => NULL,
-          '#required' => TRUE,
-          );
-
-  $form['ccv'] =
-    array('#type' => 'textfield',
-          '#title' => t('CCV Security Code'),
-          '#description' => t('The 3 digit number on back of card, or 4 digit number on the front.'),
-          '#size' => 4,
-          '#maxlength' => 4,
-          '#required' => TRUE,
-          );
-
-  $form['expiry_date'] =
-    array('#type' => 'fieldset',
-          '#title' => t('Expiration Date'),
-          );
-
-  $form['expiry_date']['cc_month'] =
-    array('#type' => 'select',
-          '#title' => t('Month'),
-          '#default_value' => ($month ? $month : date('m')),
-          '#options' => $months,
-          '#description' => NULL,
-          '#extra' => 0,
-          '#multiple' => FALSE,
-          '#required' => TRUE,
-          );
-
-  $form['expiry_date']['cc_year'] =
-    array('#type' => 'select',
-          '#title' => t('Year'),
-          '#default_value' => ($year ? $year : date('Y')),
-          '#options' => $years,
-          '#description' => NULL,
-          '#extra' => 0,
-          '#multiple' => FALSE,
-          '#required' => TRUE,
-          );
-
-  // $form['#method'] = 'POST';
-  // $form['#attributes']['autocomplete'] = 'off';
-  // $form['#action'] = str_replace('http://', 'https://', url("store/payment/quickpay/$txnid", array('absolute' => TRUE)));
-
-  return $form;
-}
-
 function uc_quickpay_complete($cart_id = 0) {
   // watchdog('2Checkout', 'Receiving new order notification for order !order_id.', array('!order_id' => check_plain($_POST['merchant_order_id'])));
 
   $order = uc_order_load($_SESSION['cart_order']);
 
-  if ($order === FALSE || uc_order_status_data($order->order_status, 'state') != 'in_checkout') {
+  if ($order === FALSE || !in_array(uc_order_status_data($order->order_status, 'state'), array('in_checkout',
+                                                                                              'post_checkout'))) {
     print t('An error has occurred during payment.  Please contact us to ensure your order has submitted.');
     exit();
   }
@@ -316,9 +257,6 @@ function uc_quickpay_complete($cart_id = 0) {
     uc_order_comment_save($order_id, 0, t('!type payment is pending approval at 2Checkout.com.', array('!type' => $_POST['pay_method'] == 'CC' ? t('Credit card') : t('eCheck'))), 'admin');
   }
   */
-
-  // Empty that cart...
-  uc_cart_empty($cart_id);
 
   $_SESSION['last_order'] = $order->order_id;
   $output .= uc_cart_complete_sale($order, variable_get('uc_new_customer_login', FALSE));
@@ -347,16 +285,20 @@ function uc_quickpay_quickpay_callback($order_id, $transaction) {
     return FALSE;
   }
 
-  /* FIXME: check like:
-$order->payment_method == 'quickpay';
-  if ($txn->payment_method != 'ec_quickpay') {
-   watchdog('quickpay', t('Order @txn wasn\'t a QuickPay order',
-                          array('@txn' => $txn->txnid)), WATCHDOG_ERROR);
+  if ($order->payment_method != 'quickpay') {
+   watchdog('quickpay', t('Order @order_id wasn\'t a QuickPay order',
+                          array('@order_id' => $order->order_id)), WATCHDOG_ERROR);
    drupal_access_denied();
    return;
-  } */
-
+  }
+  
   _uc_quickpay_handle_transaction($order, $transaction);
+
+  if (quickpay_successful($transaction)) {
+    // Move the transaction to post_checkout. Normally
+    // uc_cart_complete_sale() does this, but we can't call it here.
+    uc_order_update_status($order->order_id, uc_order_state_default('post_checkout'));
+  }
 }
 
 /**
@@ -369,7 +311,8 @@ function uc_quickpay_quickpay_popdown($order_id, $status) {
 
   $order = uc_order_load($order_id);
 
-  if ($order === FALSE || uc_order_status_data($order->order_status, 'state') != 'in_checkout') {
+  if ($order === FALSE || !in_array(uc_order_status_data($order->order_status, 'state'), array('in_checkout',
+                                                                                              'post_checkout'))) {
     if ($order === FALSE)
       watchdog('quickpay', 'Unknown order @order_id in success page.',
                array('@order' => $order_id), WATCHDOG_ERROR);
