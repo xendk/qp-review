@@ -78,8 +78,10 @@ function uc_quickpay_form_alter(&$form, &$form_state, $form_id) {
                               $payment->qp_transaction .
                               '&transaction=1&showDeleted=0')));
 
-        $balance = uc_payment_balance($order->order_id);
-        if ($balance == 0) {
+        $balance = uc_payment_balance($order);
+
+        // Round to 4 decimals, as UC have floating point rounding errors.
+	if (round($balance, 4) != 0) {
           // Add capture
           $form['quickpay']['capture'] =
             array(
@@ -99,7 +101,7 @@ function uc_quickpay_form_alter(&$form, &$form_state, $form_id) {
               '#action' => 'reverse',
             );
 
-        } elseif ($balance = $order->order_total) {
+        } elseif ($balance == $order->order_total) {
           // Add credit
         }
       }
