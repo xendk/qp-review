@@ -95,10 +95,10 @@ function uc_quickpay_form_alter(&$form, &$form_state, $form_id) {
           $form['quickpay']['reverse'] =
             array(
               '#type' => 'submit',
-              '#value' => t('Reverse'),
+              '#value' => t('Cancel'),
               '#validate' => array(),
               '#submit' => array('uc_quickpay_transaction_submit'),
-              '#action' => 'reverse',
+              '#action' => 'cancel',
             );
 
         } elseif ($balance == $order->order_total) {
@@ -110,48 +110,39 @@ function uc_quickpay_form_alter(&$form, &$form_state, $form_id) {
 }
 
 function uc_quickpay_transaction_submit($form, &$form_state) {
-  // FIXME: Rewrite to a switch or separate into 2.
   $order = uc_order_load($form_state['values']['order_id']);
   $payment = _uc_quickpay_get_last_transaction($order->order_id);
-  // FIXME: use _uc_quickpay_handle_transaction here...
-  if ($form_state['clicked_button']['#action'] == 'capture') {
-    $qptxn = quickpay_capture(array('transaction' =>
-                                    $payment->qp_transaction),
+  if (in_array($form_state['clicked_button']['#action'], array('capture', 'cancel'))) {
+    if ($form_state['clicked_button']['#action'] == 'capture') {
+      $qptxn = quickpay_capture(array('transaction' => $payment->qp_transaction),
                               $order->order_total);
+      $action = 'Capture';
+      $amount = $qptxn['amount'];
+      $did = 'captured';
+    } else {
+      $qptxn = quickpay_cancel(array('transaction' => $payment->qp_transaction));
+      $action = 'Cancel';
+      $amount = 0;
+      $did = 'cancelled';
+    }
+    
     if (quickpay_successful($qptxn)) {
-      drupal_set_message(t('Successfully captured.'));
-      uc_payment_enter($order->order_id, 'quickpay', $qptxn['amount'], 0,
-                       array('qp_transaction' =>
-                             $transaction['transaction']),
-                       'Captured ' . $qptxn['amount']);
+      drupal_set_message(t("Successfully $did."));
+      uc_payment_enter($order->order_id, 'quickpay', $amount, 0,
+                       array('qp_transaction' => $transaction['transaction']),
+                       drupal_ucfirst($did) . ' ' . $qptxn['amount']);
     } else {
       $error = _quickpay_qpstat_codes($qptxn['qpstat']);
-      drupal_set_message(t('Capture failed, reason given: %error',
-                           array('%error' => $error)), 'error');
+      drupal_set_message(t('%action failed, reason given: %error',
+                           array('%error' => $error, '%action' => $action)), 'error');
       uc_payment_enter($order->order_id, 'quickpay', 0, 0,
                        array('qp_transaction' =>
                              $transaction['transaction']),
-                       'Capture failed, error: ' . $error);
+                       $action . ' failed, error: ' . $error);
     }
-  } elseif ($form_state['clicked_button']['#action'] == 'reverse') {
-    $qptxn = quickpay_cancel(array('transaction' =>
-                                   $payment->qp_transaction));
-    if (quickpay_successful($qptxn)) {
-      drupal_set_message(t('Successfully reversed.'));
-      uc_payment_enter($order->order_id, 'quickpay', 0, 0,
-                       array('qp_transaction' =>
-                             $transaction['transaction']),
-                       'Reversed.');
-    } else {
-      $error = _quickpay_qpstat_codes($qptxn['qpstat']);
-      drupal_set_message(t('Reversal failed, reason given: %error',
-                           array('%error' => $error)), 'error');
-      uc_payment_enter($order->order_id, 'quickpay', 0, 0,
-                       array('qp_transaction' =>
-                             $transaction['transaction']),
-                       'Reversal failed, error: ' . $error);
-    }
+    
   }
+
 }
 
 /**
