@@ -407,6 +407,9 @@ function quickpay_supported_currencies() {
 // --- Core API functions ---
 
 function quickpay_successful($txn) {
+  if ($txn === FALSE) {
+    return FALSE;
+  }
   return $txn['qpstat'] == '000';
 }
 /**
@@ -416,6 +419,9 @@ function quickpay_successful($txn) {
  * if the transaction had an unknown return code.
  */
 function quickpay_result($txn) {
+  if ($txn === FALSE) {
+    return 'error';
+  }
   switch ($txn['qpstat']) {
   case '000': // Accepted
     return 'success';
