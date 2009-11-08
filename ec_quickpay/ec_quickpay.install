@@ -1,0 +1,80 @@
+<?php
+// $Id$
+
+/**
+ * Implementation of hook_install().
+ */
+function ec_quickpay_install() {
+  drupal_install_schema('ec_quickpay');
+}
+
+/**
+ * Implementation of hook_enable().
+ */
+function ec_quickpay_enable() {
+  $workflow = (object) array(
+    'description' => 'awaiting capture',
+    'type' => 0,
+    'weight' => 6,
+  );
+
+  if (drupal_write_record('ec_workflow_statuses', $workflow)) {
+    variable_set('ec_quickpay_waiting_state', $workflow->workflow);
+    // Adjust the weights of the following states.
+    db_query('UPDATE {ec_workflow_statuses} SET weight = weight + 1 WHERE workflow <> %d AND weight > 5', $workflow->workflow);
+  }
+}
+
+
+/**
+ * Implementation of hook_uninstall().
+ */
+function ec_quickpay_uninstall() {
+  drupal_uninstall_schema('ec_quickpay');
+}
+
+/**
+ * Implementation of hook_disable().
+ */
+function ec_quickpay_disable() {
+  $state = variable_get('ec_quickpay_waiting_state', FALSE);
+  if ($state) {
+    db_query('DELETE FROM {ec_workflow_statuses} WHERE workflow = %d', $state);
+  }
+  variable_del('ec_quickpay_waiting_state');  
+}
+
+
+/**
+ * Implementation of hook_schema().
+ */
+function ec_quickpay_schema() {
+  $schema = array();
+
+  $schema['ec_quickpay_receipt_transaction'] = array(
+    'fields' => array(
+      'erid' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'disp-width' => '10',
+      ),
+      'type' => array(
+        'type' => 'varchar',
+        'length' => '32',
+        'not null' => TRUE,
+      ),
+      'etid' => array(
+        'type' => 'varchar',
+        'length' => '32',
+        'not null' => TRUE,
+      ),
+    ),
+    'primary key' => array('erid'),
+    'indexes' => array(
+      'type' => array('type', 'etid'),
+    ),
+  );
+
+  return $schema;
+}

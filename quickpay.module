@@ -145,7 +145,7 @@ function quickpay_settings_form() {
 
 function quickpay_order_prefix_validate($element, &$form_state) {
   if (!preg_match('/^[a-zA-Z0-9]{0,15}$/', $element['#value'])) {
-    form_error($element, t('Order prefix must only contain alphanumerics and no longer than 15 characters.'));
+    form_error($element, t('Order prefix must only contain alphanumerics and be no longer than 15 characters.'));
   }
 }
 
@@ -323,7 +323,6 @@ function quickpay_hosted_form($amount, $currency, $order_id, $form_id, $continue
     return;
   }
   $data['amount'] = $amount;
-  // FIXME: any other option than using default currency?
   $data['currency'] = $currency;
   $data['continueurl'] = $continue_url;
   $data['cancelurl'] = $cancel_url;

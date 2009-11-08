@@ -5,28 +5,30 @@
 /**
  * Implementation of menu_hook()
  */
-function ec_quickpay_menu($may_cache) {
-
+function ec_quickpay_menu() {
   $items = array();
-  if ($may_cache) {
-    $items[] = array(
-      'path' => 'store/payment/quickpay', 
-      'title' => t('Credit Card Payment'),
-      'callback' => 'drupal_get_form',
-      'callback arguments' => array('ec_quickpay_form'),
-      'access' => true, 
-      'type' => MENU_CALLBACK
-    );
-    $items[] = array(
-      'path' => 'admin/ecsettings/quickpay',
-      'title' => 'QuickPay',
-      'callback' => 'drupal_get_form',
-      'callback arguments' => 'ec_quickpay_settings',
-      'access' => user_access('administer store'),
-      'type' => MENU_NORMAL_ITEM,
-      'description' => t('Configuration for the QuickPay payment gateway'),
-    );
-  }
+  $items['quickpay/payment/%ec_receipt'] = array(
+    'title' => 'Credit Card Payment',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('ec_quickpay_form', 2),
+    'access callback' => TRUE, 
+    'type' => MENU_CALLBACK
+  );
+  $items['admin/ecsettings/rtypes/quickpay/settings'] = array(
+    'title' => 'Settings',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('ec_quickpay_settings'),
+    'access arguments' => array('administer store'),
+    'type' => MENU_LOCAL_TASK,
+    'description' => 'Configuration for the QuickPay payment gateway',
+  );
+  $items['store/transaction/%ec_store_transaction/quickpay_capture'] = array(
+    'title' => 'Capture QuickPay payments',
+    'page callback' => 'ec_quickpay_transaction_capture',
+    'page arguments' => array(2),
+    'access arguments' => array('administer store'),
+    'type' => MENU_CALLBACK,
+  );
   return $items;
 }
 
@@ -35,247 +37,116 @@ function ec_quickpay_settings() {
   return $form;
 }
 
-function ec_quickpay_paymentapi(&$txn, $op, $arg = '') {
-  switch ($op) {
-    case 'display name':
-      // We want it extra nice on the checkout page.
-      return t('QuickPay') . ((arg(0) == 'cart' and arg(1) == 'checkout') ?
-                              "<br />" . theme('quickpay_cards',
-                                               quickpay_supported_cards()) :
-                              "");
+/**
+ * Implementation of hook_receipt_info().
+ */
+function ec_quickpay_receipt_info() {
+  $currency = quickpay_supported_currencies();
 
-    case 'on checkout':
-      ec_quickpay_verify_checkout($txn);
-      break;
+  $rtypes = array(
+    'quickpay' => array(
+      'name' => t('QuickPay'),
+      'description' => t('Checkout using QuickPay.'),
+      /*
+       TODO: Ask QuickPay whether they'd like an icon.
+      'icon' => array(
+        'src' => drupal_get_path('module', 'ec_quickpay') .'/images/QuickPay.png',
+        'attributes' => array(
+          'title' => t('QuickPay'),
+        ),
+      ),
+      */
+      'module' => array('ec_quickpay'),
+      'currencies_supported' => $currency,
+      /*
+      'gateway_requirements' => array(
+        t('TODO: Ask QuickPay if they want any requirements shown here.'),
+      ),
+      */
+    ),
+  );
 
-    case 'payment page':
-      if ($txn->gross > 0) {
-        return ec_quickpay_goto($txn);
-      }
-      break;
-    }
-}
 
-function ec_quickpay_form_alter($form_id, &$form) {
-  if ($form_id == 'store_transaction_form') {
-    if ($form['overview'] and
-	$form['overview']['payment_method']['#default_value'] == 'ec_quickpay') {
-      $form['overview']['payment_method']['#description'] =
-	t('<em>WARNING:</em> Changing payment status might lose the QuickPay status. Please cancel the transaction before changing payment method.');
-      $form['overview']['quickpay'] =
-	array('#type' => 'fieldset',
-	      '#title' => t('QuickPay'));
-
-      $transaction = $form['#parameters'][1]->payment->cc_refnum;
-      
-      $form['overview']['quickpay']['admin'] =
-	array('#type' => 'markup',
-	      '#value' => l(t('Quickpay administration'),
-			    'https://secure.quickpay.dk/payments/index.php',
-			    array('target' => 'ec_quickpay'),
-			    'searchType=word&keyword=' . $transaction .
-			    '&transaction=1&showDeleted=0'));
-			    
-      $payment_status = $form['overview']['payment_status']['#default_value'];
-      if ($payment_status == 7) {
-	// payment received.
-	// capture
-	$form['overview']['quickpay']['capture'] =
-	  array('#type' => 'submit',
-		'#value' => t('Capture'));
-	// reverse
-	$form['overview']['quickpay']['reverse'] =
-	  array('#type' => 'submit',
-		'#value' => t('Reverse'));
-      }
-      $form['#submit']['ec_quickpay_transaction_submit'] = array();
-    }
+  if (variable_get('quickpay_merchant', FALSE) and
+      variable_get('quickpay_secret', FALSE)) {
+    $rtypes['quickpay']['allow_payments'] = TRUE;
+  /*
+   Also:
+      'allow_admin_payments' => TRUE,
+      'allow_refunds'        => TRUE,
+      'allow_payto'          => TRUE,
+      'allow_recurring'      => TRUE,
+  */
   }
-}
-
-function ec_quickpay_transaction_submit($form_id, $form_values) {
-  if ($form_values['op'] == t('Capture') or 
-      $form_values['op'] == t('Reverse')) {
-    $txn = store_transaction_load($form_values['txnid']);
-    $payment = $txn->payment;
-    if ($form_values['op'] == t('Capture')) {
-      $qptxn = quickpay_capture(array('transaction' => $payment->cc_refnum),
-				$payment->cc_amount);
-      if (quickpay_successful($qptxn)) {
-	drupal_set_message(t('Successfully captured.'));
-	store_transaction_save(array('txnid' => $txn->txnid,
-				     'payment_method' => 'ec_quickpay',
-				     'payment' => $payment,
-				     'payment_status' =>
-				     payment_get_status_id('completed')));
-      } else {
-	$error = _quickpay_qpstat_codes($qptxn['qpstat']);
-	drupal_set_message(t('Capture failed, reason given: %error',
-			     array('%error' => $error)), 'error');
-	store_transaction_save(array('txnid' => $txn->txnid,
-				     'payment_method' => 'ec_quickpay',
-				     'payment' => $payment,
-				     'payment_status' =>
-				     payment_get_status_id('failed')));
-      }
-    } elseif ($form_values['op'] == t('Reverse')) {
-      $qptxn = quickpay_cancel(array('transaction' => $payment->cc_refnum));
-      if (quickpay_successful($qptxn)) {
-	drupal_set_message(t('Successfully reversed.'));
-	store_transaction_save(array('txnid' => $txn->txnid,
-				     'payment_method' => 'ec_quickpay',
-				     'payment' => $payment,
-				     'payment_status' =>
-				     payment_get_status_id('canceled')));
-      } else {
-	$error = _quickpay_qpstat_codes($qptxn['qpstat']);
-	drupal_set_message(t('Reversal failed, reason given: %error',
-			     array('%error' => $error)), 'error');
-	store_transaction_save(array('txnid' => $txn->txnid,
-				     'payment_method' => 'ec_quickpay',
-				     'payment' => $payment,
-				     'payment_status' =>
-				     payment_get_status_id('failed')));
-      }
-    }
-    $dest = drupal_get_destination();
-    unset($_REQUEST['destination'], $_REQUEST['edit']['destination']);
-    return array('admin/store/transaction/edit/'. $form_values['txnid'],
-		 $dest . '&section=' . $_GET['section']);
+  else {
+    array_unshift($rtypes['quickpay']['gateway_requirements'], t('Before QuickPay can you be used, the Settings need to be loaded into the system. See the !settings page for configuring QuickPay', array('!settings' => l(t('settings'), 'admin/ecsettings/rtypes/quickpay/settings', array('query' => drupal_get_destination())))));
   }
+
+  return $rtypes;
 }
 
 /**
- * Called immediately after the user has clicked the checkout button.
- *
- * Redirect the user to the local payment page, which will either present a
- * form for going to QuickPays hosted page, or (if SSL) present a local form.
+ * Implementation of hook_receipt_payment_url().
  */
-function ec_quickpay_goto($txn) {
-  global $base_url;
-  $payment_url = url('store/payment/quickpay/'. $txn->txnid, NULL, NULL, TRUE);
-  drupal_goto($payment_url);
-  exit();
+function ec_quickpay_receipt_payment_url($receipt, $atype, $object) {
+  $id = $receipt->erid;
+  if ($inv_no = ec_receipt_alloc_invoke($atype, 'get_invoice_no', $object)) {
+    $id .= "/" . $inv_no; // Not using this for anything but it may be good for the customer.
+  }
+
+  return 'quickpay/payment/' . $id;
 }
 
+function ec_quickpay_form(&$form_state, $receipt, $invoice_no) {
+  $total = $receipt->amount;
+  $currency = $receipt->currency;
 
-/**
- * Implementation of hook_ec_transactionapi().
- */
-function ec_quickpay_ec_transactionapi(&$txn, $op, $a3 = NULL, $a4 = NULL) {
-  if ($txn->payment_method != 'ec_quickpay') return NULL;
-  switch ($op) {
-    case 'load':
-      $txn->payment = db_fetch_object(db_query("SELECT * FROM {ec_credit_card} WHERE txnid = %d", $txn->txnid));
-      break;
-    case 'insert':
-    case 'update':
-      payment_cc_save($txn);
-      break;
-    case 'delete':
-      payment_cc_delete($txn);
-      break;
-  }
-}
-
-function ec_quickpay_verify_checkout($txn) {
-  $estimate = store_transaction_calc_gross($txn);
-  // Not sure this is strictly needed, but might as well
-  if (0 > $estimate) {
-    form_set_error('gross', t('Your purchase total must be at least %min-purchase-amount for QuickPay purchases.', array('%min-purchase-amount' => payment_format('0.00'))));
-  }
-}
-
-/**
- * Build the credit card form.
- */
-function ec_quickpay_form($txnid, $error = null) {
-  global $user, $base_url;
-
-  $txn = store_transaction_load($txnid);
-
-  // Make sure the user owns the transaction or is an admin.
-  if ($user->uid != $txn->uid && $user->uid != 1  && !user_access('administer store')) {
-    return drupal_access_denied();
+  $return_url = variable_get('ec_receipt_return_url', 'node');
+  if ($return_url == '%order-history') {
+    $return_url = "user/$user->uid/store";
   }
 
-  if ($error) {
-    // Now it's not an error anymore, the user just cancelled.
-    // drupal_set_message("QuickPay didn't approve the payment, please try again.", 'error');
-  }
-  
-  // Build a list of items to show the user
-  if ($txn->items) {
-    foreach ($txn->items as $p) {
-      $subtotal += $p->qty * $p->price;
-      $items[] = t('%order of <b>%title</b> at %price each',
-		   array('%order' =>
-			 format_plural($p->qty, '1 order', '@count orders'),
-			 '%title' => $p->title,
-			 '%price' => payment_format($p->price)));
-    }
-  }
-  $form['items'] = array('#value' => theme('item_list', $items, t('Your items')). '</p>');
+  if ($total and $currency) {
+    $form = quickpay_hosted_form($total, $currency,
+                                 $receipt->erid,
+                                 'ec-quickpay-form', 
+                                 url($return_url, array('absolute' => TRUE)),
+                                 url('store/payment/quickpay/' . $receipt->erid .
+                                     '/cancel', array('absolute' => TRUE)),
+                                 url('quickpay/' . $receipt->erid, array('absolute' => TRUE)));
 
-  
-  // Build the form to send them to quickpay.
-  $form2 = quickpay_hosted_form(store_transaction_calc_gross($txn),
-				$txn->txnid,
-				'ec-quickpay-form', 
-				url(quickpay_success_url($txn), null, null, true),
-				url('store/payment/quickpay/' . $txn->txnid .
-				    '/cancel', null, null, true),
-				url('quickpay/' . $txn->txnid, null, null,
-				    true));
-  $form = array_merge($form, $form2);
+    $form['message'] = array(
+      '#type' => 'markup',
+      '#value' => "<p>" . variable_get('quickpay_hosted_link_message',
+                                       'In order to complete the payment, continue to QuickPay to enter your credit card information.') . "</p>",
+      '#weight' => -5,
+    );
+  } else {
+    // TODO: Better error handling.
+    drupal_set_message(t('Internal error'), 'error');
+  }
   return $form;
-}
 
-/**
- * Implementation of hook_quickpay_popdown().
- */
-function ec_quickpay_quickpay_popdown($txnid, $status) {
-  global $user;
-  if (!is_numeric($txnid)) {
-    return null;
-  }
-
-  $txn = store_transaction_load($txnid);
-
-  // Make sure the user owns the transaction or is an admin.
-  if ($user->uid != $txn->uid && $user->uid != 1  &&
-      !user_access('administer store')) {
-    return null;
-  }
-
-
-  if ($status == 'success') {
-    $url = url(quickpay_success_url($txn), null, null, true);
-  } else { 
-    // FIXME: configurable errorpage?
-    $url = url('store/payment/quickpay/' . $txn->txnid . '/cancel',
-	       null, null, true);
-  }
-  return $url;
 }
 
 /**
  * Implementation of hook_quickpay_callback().
  */
-function ec_quickpay_quickpay_callback($txnid, $transaction) {
-  if (!is_numeric($txnid)) {
-    return null;
-  }
-  
-  $txn = store_transaction_load($txnid);
-  if (!$txn) {
-    return null;
+function ec_quickpay_quickpay_callback($erid, $transaction) {
+  $args = func_get_args();
+  if (!is_numeric($erid)) {
+    return NULL;
   }
 
-  if ($txn->payment_method != 'ec_quickpay') {
-   watchdog('quickpay', t('Order @txn wasn\'t a QuickPay order',
-			  array('@txn' => $txn->txnid)), WATCHDOG_ERROR);
-   return false;
+  $receipt = ec_receipt_load($erid);
+  if (!$receipt) {
+    return NULL;
+  }
+
+  if ($receipt->type != 'quickpay') {
+   watchdog('quickpay', 'Receipt @erid wasn\'t a QuickPay transaction',
+            array('@erid' => $receipt->erid), WATCHDOG_ERROR);
+   return FALSE;
   }
 
   if (!$transaction) {
@@ -283,74 +154,288 @@ function ec_quickpay_quickpay_callback($txnid, $transaction) {
     drupal_access_denied();
     return;
   }
-  
-  $payment = new StdClass;
-  $payment->cc_amount = $transaction['amount'];
-  $payment->cc_refnum = $transaction['transaction'];
-  $payment->cc_ordernum = $transaction['ordernumber'];
-  $codes = _quickpay_qpstat_codes();
-  $payment->cc_reason = $transaction['qpstat'] . ": " .
-    $codes[$transaction['qpstat']];
 
-  _ec_quickpay_handle_transaction($txn, $payment, $transaction);
+  $receipt->amount = $transaction['amount'];
+  $receipt->currency = $transaction['currency'];
+  $receipt->extern_id = $transaction['transaction'];
+
+  switch (quickpay_result($transaction)) {
+    case 'success':
+      // TODO: RECEIPT_STATUS_COMPLETED when we support autocapture.
+      $receipt->status = RECEIPT_STATUS_RECEIVED;
+      break;
+    case 'failed':
+      $receipt->status = RECEIPT_STATUS_DENIED;
+      break;
+    case 'error':
+      $receipt->status = RECEIPT_STATUS_FAILED;
+      break;
+    default:
+      watchdog('quickpay', 'Unknown qpstat code: @code.',
+               array('@code' => $transaction['qpstat']), WATCHDOG_ERROR);
+      return;
+      break;
+  }
+  ec_receipt_save($receipt);
 }
 
-function _ec_quickpay_handle_transaction($txn, $payment, $transaction) {
-  switch (quickpay_result($transaction)) {
-  case 'success': // Accepted
-    // FIXME: check if we're autocapturing and set it completed if that's the
-    // FIXME: case
-    store_transaction_save(array('txnid' => $txn->txnid,
-				 'payment_method' => 'ec_quickpay',
-				 'payment' => $payment,
-				 'payment_status' =>
-				 payment_get_status_id('payment received'))); 
-    watchdog('quickpay',
-	     t('Payment authorized for transaction %txn.',
-	       array('%txn' => $txn->txnid)), WATCHDOG_NOTICE,
-	     'admin/store/transaction/edit/' . $txn->txnid .
-	     '&section=overview');
-    return true;
-    break;
-  case 'failed': // Failed
-    // Handled as denied.
-    store_transaction_save(array('txnid' => $txn->txnid,
-				 'payment_method' => 'ec_quickpay',
-				 'payment' => $payment,
-				 'payment_status' =>
-				 payment_get_status_id('failed')));
-    watchdog('quickpay',
-	     t('Payment failed for transaction %txn: %message.',
-	       array('%txn' => $txn->txnid,
-		     '%message' => $transaction['qpstatmsg'])),
-	     WATCHDOG_NOTICE,
-	     'admin/store/transaction/edit/' . $txn->txnid .
-	     '&section=overview');
-    return $transaction['qpstatmsg'];
-    break;
-  case 'error': // Errors
-    // All these are handled as internal error.
-    watchdog('quickpay',
-	     t('Transaction code %code (%message), transaction %txn is set failed, but something might be wrong.',
-	       array('%code' => $transaction['qpstat'], '%txn' => $txn->txnid,
-	       '%message' => $transaction['message'])), WATCHDOG_ERROR,
-	     'admin/store/transaction/edit/' . $txn->txnid .
-	     '&section=overview');
-    store_transaction_save(array('txnid' => $txn->txnid,
-				 'payment_method' => 'ec_quickpay',
-				 'payment' => $payment,
-				 'payment_status' =>
-				 payment_get_status_id('failed')));
-    return null;    
-    break;
-  default:
-    watchdog('quickpay',
-	     t('Unknown transaction code %code for transaction %txn, transaction ignored.',
-	       array('%code' => $transaction['qpstat'],
-		     '%txn' => $txn->txnid,
-		     '%message' => $transaction['qpstatmsg'])),
-	     WATCHDOG_ERROR, 'admin/store/transaction/edit/' . $txn->txnid .
-	     '&section=overview');
-    return null;
+/**
+ * Implementation of hook_ec_receipt_status().
+ *
+ */
+function ec_quickpay_ec_receipt_status($receipt, $original) {
+  // Kick the allocation to in_picking..
+  if ($receipt->type != 'quickpay') {
+    return;
   }
+
+  if ($receipt->status == RECEIPT_STATUS_RECEIVED && !empty($receipt->allocation)) {
+    foreach ($receipt->allocation as $alloc) {
+      if ($alloc['type'] == 'transaction') {
+        // Tickle the allocation status
+        $txn = ec_store_transaction_load($alloc['id']);
+        ec_store_transaction_save($txn);
+      }
+    }
+  }
+}
+
+function ec_quickpay_receipt_save($receipt) {
+  // Store link between allocation and receipt for later use.
+  db_query('DELETE FROM {ec_quickpay_receipt_transaction} WHERE erid = %d', $receipt->erid);
+  foreach ($receipt->allocation as $alloc) {
+    db_query("INSERT INTO {ec_quickpay_receipt_transaction} (erid, type, etid) VALUES (%d, '%s', %d)", $receipt->erid, $alloc['type'], $alloc['id']);
+  }
+}
+
+function ec_quickpay_form_ec_receipt_view_form_alter(&$form, &$form_state) {
+  if ($form['receipt']['#value']->type == 'quickpay') {
+      $qp_transaction = $form['receipt']['#value']->extern_id;
+      
+      $form['quickpay']['admin'] =
+        array('#type' => 'markup',
+              '#value' => l(t('Quickpay administration'), 
+                            'https://secure.quickpay.dk/payments/index.php',
+                            array(
+                              'attributes' => array(
+                                'target' => 'ec_quickpay'
+                              ),
+                              'query' => 'searchType=word&keyword=' . $qp_transaction .
+                              '&transaction=1&showDeleted=0')));
+                                  
+      if ($form['receipt']['#value']->status == RECEIPT_STATUS_RECEIVED) {
+        // payment received.
+        // capture
+        $form['overview']['quickpay']['capture'] =
+          array(
+            '#type' => 'submit',
+            '#value' => t('Capture'),
+            '#submit' => array('ec_quickpay_transaction_submit'),
+            '#action' => 'capture',
+          );
+        // cancel
+        $form['overview']['quickpay']['cancel'] =
+          array(
+            '#type' => 'submit',
+            '#value' => t('Cancel'),
+            '#submit' => array('ec_quickpay_transaction_submit'),
+            '#action' => 'cancel',
+          );
+      }
+
+
+  }
+}
+
+function ec_quickpay_transaction_submit($form, &$form_state) {
+  $receipt = $form['receipt']['#value'];
+
+  if (in_array($form_state['clicked_button']['#action'], array('capture', 'cancel'))) {
+    if ($form_state['clicked_button']['#action'] == 'capture') {
+      $qptxn = quickpay_capture(array('transaction' => $receipt->extern_id,
+                                      'currency' => $receipt->currency),
+                                $receipt->amount);
+      $action = 'Capture';
+      $amount = $qptxn['amount'];
+      $did = 'captured';
+    } else {
+      $qptxn = quickpay_cancel(array('transaction' => $receipt->extern_id));
+      $action = 'Cancel';
+      $amount = 0;
+      $did = 'cancelled';
+    }
+    
+    if (quickpay_successful($qptxn)) {
+      drupal_set_message(t("Successfully !did.", array('!did' => $did)));
+      $receipt->status = RECEIPT_STATUS_COMPLETED;
+      ec_receipt_save($receipt);
+    } else {
+      $error = _quickpay_qpstat_codes($qptxn['qpstat']);
+      drupal_set_message(t('!action failed, reason given: %error',
+                           array('%error' => $error, '!action' => $action)), 'error');
+      $receipt->status = RECEIPT_STATUS_FAILED;
+      ec_receipt_save($receipt);
+    }
+  }
+}
+
+/**
+ * Implementation of hook_quickpay_popdown().
+ */
+function ec_quickpay_quickpay_popdown($erid, $status) {
+  global $user;
+  if (!is_numeric($erid)) {
+    return NULL;
+  }
+
+  $receipt = ec_receipt_load($erid);
+  if (!$receipt) {
+    return NULL;
+  }
+
+  $receipt = ec_receipt_load($erid);
+
+  /*
+  // Make sure the user owns the transaction or is an admin.
+  if ($user->uid != $txn->uid && $user->uid != 1  &&
+      !user_access('administer store')) {
+    return NULL;
+  }
+  */
+
+  if ($status == 'success') {
+    $url = variable_get('ec_receipt_return_url', 'node');
+    if ($url == '%order-history') {
+      $url = "user/$user->uid/store";
+    }
+    $url = url($url, array('absolute' => TRUE));
+  } else { 
+    // FIXME: configurable errorpage?
+    $url = url('store/payment/quickpay/' . $erid . '/cancel', array('absolute' => TRUE));
+  }
+  return $url;
+}
+
+function ec_quickpay_link($type, $object, $teaser = FALSE) {
+  $links = array();
+  // dpm($object);
+  if ($type == 'ec_receipt_allocation' && user_access(EC_PERM_MANAGE) &&
+      $object->payment_method == 'quickpay' && $object->status == RECEIPT_STATUS_RECEIVED) {
+    /*
+     TODO: look into this.
+    $links['captured'] = array(
+      'title' => t('Capture'),
+      'href' => 'store/receipt/'. $object->erid .'/reverse/'. $object->eaid,
+      'attributes' => array(
+        'title' => t('Capture'),
+      ),
+    );
+    */
+  }
+  elseif ($type == 'ec_store_transaction') {
+    $res = db_query("SELECT eqrt.erid, er.status, er.type FROM {ec_quickpay_receipt_transaction} eqrt LEFT JOIN {ec_receipt} er USING (erid) WHERE eqrt.type = 'transaction' AND eqrt.etid = %d", $object->txnid);
+    while ($row = db_fetch_object($res)) {
+      if ($row->type == 'quickpay' and $row->status == RECEIPT_STATUS_RECEIVED) {
+        $links['capture'] = array(
+          'title' => t('Capture payments'),
+          'href' => 'store/transaction/'. $object->txnid .'/quickpay_capture',
+          'query' => drupal_get_destination(),
+          'attributes' => array(
+            'title' => t('Capture'),
+          ),
+        );
+        break;
+      }
+    }
+  }
+  return $links;
+}
+
+/**
+ * Attempt capture on all QuickPay receipts on a transaction.
+ */
+function ec_quickpay_transaction_capture($transaction, $goto = TRUE) {
+  $res = db_query("SELECT eqrt.erid, er.status, er.type FROM {ec_quickpay_receipt_transaction} eqrt LEFT JOIN {ec_receipt} er USING (erid) WHERE eqrt.type = 'transaction' AND eqrt.etid = %d", $transaction->txnid);
+  while ($row = db_fetch_object($res)) {
+    $receipt = ec_receipt_load($row->erid);
+    if ($receipt->type == 'quickpay' and $receipt->status == RECEIPT_STATUS_RECEIVED) {
+      $qptxn = quickpay_capture(array('transaction' => $receipt->extern_id,
+                                      'currency' => $receipt->currency),
+                                $receipt->amount);
+      if (quickpay_successful($qptxn)) {
+        drupal_set_message(t('Successfully captured.'));
+        $receipt->status = RECEIPT_STATUS_COMPLETED;
+        ec_receipt_save($receipt);
+      } else {
+        $error = _quickpay_qpstat_codes($qptxn['qpstat']);
+        drupal_set_message(t('Capture failed, reason given: %error',
+                             array('%error' => $error)), 'error');
+        $receipt->status = RECEIPT_STATUS_FAILED;
+        ec_receipt_save($receipt);
+      }
+    }
+  }
+  if ($goto) {
+    drupal_goto('admin/transaction/' . $transaction->txnid);
+  }
+}
+
+function ec_quickpay_rules_import(&$rule) {
+  // Examine the rule, e.g. check if it is event-triggered.
+  if ($rule['#set'] === 'event_ec_store_event_transactions_bef_save' and
+      $rule['#label'] == 'Mark shipped product as completed') {
+    $rule['#conditions'][] =
+      array(
+        '#weight' => 0,
+        '#info' => array(
+          'label' => 'Transaction allocation status',
+          'arguments' => array(
+            'txn' => array (
+              'type' => 'transaction',
+              'label' => 'Transaction',
+            ),
+          ),
+          'module' => 'Transaction',
+        ),
+        '#name' => 'ec_store_condition_allocation_status',
+        '#settings' => array(
+          'allocation' => array (
+            2 => '2',
+          ),
+          '#argument map' => array (
+            'txn' => 'txn',
+          ),
+        ),
+        '#type' => 'condition',
+      );
+  }
+}
+
+/**
+ * Implementation of hook_action_info().
+ */
+function ec_quickpay_action_info() {
+  return array(
+    'ec_quickpay_action_transaction_capture' => array(
+      'type' => 'transaction',
+      'description' => t('Capture QuickPay payments on transaction'),
+      'configurable' => FALSE,
+      'hooks' => array(),
+    ),
+  );
+}
+
+/**
+ * Action callback.
+ */
+function ec_quickpay_action_transaction_capture($txn, &$context) {
+  // TODO: Do we need access control here?
+  ec_quickpay_transaction_capture($txn, FALSE);
+}
+
+/**
+ * Implementation of hook_views_api().
+ */
+function ec_quickpay_views_api() {
+  return array('api' => 2.0);
 }

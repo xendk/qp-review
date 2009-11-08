@@ -1,6 +1,8 @@
 ; $Id $
-core          = "5.0"
-dependencies  = payment quickpay
-description   = "Process E-Commerce 3 payments using QuickPay."
+core          = 6.x
+dependencies[] = quickpay
+dependencies[] = ec_receipt
+dependencies[] = ec_customer
+description   = "Process E-Commerce 4 payments using QuickPay."
 package       = "QuickPay payment gateway"
-name          = "QuickPay E-Commerce 3"
+name          = "QuickPay E-Commerce 4"
