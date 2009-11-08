@@ -127,22 +127,20 @@ function uc_quickpay_transaction_submit($form, &$form_state) {
     }
     
     if (quickpay_successful($qptxn)) {
-      drupal_set_message(t("Successfully $did."));
+      drupal_set_message(t("Successfully !did.", array('!did' => $did)));
       uc_payment_enter($order->order_id, 'quickpay', $amount, 0,
                        array('qp_transaction' => $transaction['transaction']),
                        drupal_ucfirst($did) . ' ' . $qptxn['amount']);
     } else {
       $error = _quickpay_qpstat_codes($qptxn['qpstat']);
-      drupal_set_message(t('%action failed, reason given: %error',
-                           array('%error' => $error, '%action' => $action)), 'error');
+      drupal_set_message(t('!action failed, reason given: %error',
+                           array('%error' => $error, '!action' => $action)), 'error');
       uc_payment_enter($order->order_id, 'quickpay', 0, 0,
                        array('qp_transaction' =>
                              $transaction['transaction']),
                        $action . ' failed, error: ' . $error);
     }
-    
   }
-
 }
 
 /**
