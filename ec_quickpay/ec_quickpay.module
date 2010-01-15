@@ -366,8 +366,13 @@ function ec_quickpay_transaction_capture($transaction, $goto = TRUE) {
         ec_receipt_save($receipt);
       } else {
         $error = _quickpay_qpstat_codes($qptxn['qpstat']);
-        drupal_set_message(t('Capture failed, reason given: %error',
-                             array('%error' => $error)), 'error');
+        drupal_set_message(t('Capture failed, type: %error, message: %message',
+                             array('%error' => $error,
+                                   '%message' => $qptxn['qpstatqpstatmsg'])), 'error');
+        watchdog('quickpay', 'Capture failed for transaction !txnid, type: %error, message: %message',
+                 array('%error' => $error, '%message' => $qptxn['qpstatmsg'],
+                       '!txnid' => $transaction->txnid),
+                 WATCHDOG_ERROR);
         $receipt->status = RECEIPT_STATUS_FAILED;
         ec_receipt_save($receipt);
       }
