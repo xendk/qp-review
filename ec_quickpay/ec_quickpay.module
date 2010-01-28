@@ -351,8 +351,9 @@ function ec_quickpay_link($type, $object, $teaser = FALSE) {
 
 /**
  * Attempt capture on all QuickPay receipts on a transaction.
+ *
  */
-function ec_quickpay_transaction_capture($transaction, $goto = TRUE) {
+function ec_quickpay_transaction_capture($transaction, $interactive = TRUE) {
   $res = db_query("SELECT eqrt.erid, er.status, er.type FROM {ec_quickpay_receipt_transaction} eqrt LEFT JOIN {ec_receipt} er USING (erid) WHERE eqrt.type = 'transaction' AND eqrt.etid = %d", $transaction->txnid);
   while ($row = db_fetch_object($res)) {
     $receipt = ec_receipt_load($row->erid);
@@ -361,14 +362,18 @@ function ec_quickpay_transaction_capture($transaction, $goto = TRUE) {
                                       'currency' => $receipt->currency),
                                 $receipt->amount);
       if (quickpay_successful($qptxn)) {
-        drupal_set_message(t('Successfully captured.'));
+        if ($interactive) {
+          drupal_set_message(t('Successfully captured.'));
+        }
         $receipt->status = RECEIPT_STATUS_COMPLETED;
         ec_receipt_save($receipt);
       } else {
         $error = _quickpay_qpstat_codes($qptxn['qpstat']);
-        drupal_set_message(t('Capture failed, type: %error, message: %message',
-                             array('%error' => $error,
-                                   '%message' => $qptxn['qpstatqpstatmsg'])), 'error');
+        if ($interactive) {
+          drupal_set_message(t('Capture failed, type: %error, message: %message',
+                               array('%error' => $error,
+                                     '%message' => $qptxn['qpstatqpstatmsg'])), 'error');
+        }
         watchdog('quickpay', 'Capture failed for transaction !txnid, type: %error, message: %message',
                  array('%error' => $error, '%message' => $qptxn['qpstatmsg'],
                        '!txnid' => $transaction->txnid),
@@ -378,39 +383,8 @@ function ec_quickpay_transaction_capture($transaction, $goto = TRUE) {
       }
     }
   }
-  if ($goto) {
+  if ($interactive) {
     drupal_goto('admin/transaction/' . $transaction->txnid);
-  }
-}
-
-function ec_quickpay_rules_import(&$rule) {
-  // Examine the rule, e.g. check if it is event-triggered.
-  if ($rule['#set'] === 'event_ec_store_event_transactions_bef_save' and
-      $rule['#label'] == 'Mark shipped product as completed') {
-    $rule['#conditions'][] =
-      array(
-        '#weight' => 0,
-        '#info' => array(
-          'label' => 'Transaction allocation status',
-          'arguments' => array(
-            'txn' => array (
-              'type' => 'transaction',
-              'label' => 'Transaction',
-            ),
-          ),
-          'module' => 'Transaction',
-        ),
-        '#name' => 'ec_store_condition_allocation_status',
-        '#settings' => array(
-          'allocation' => array (
-            2 => '2',
-          ),
-          '#argument map' => array (
-            'txn' => 'txn',
-          ),
-        ),
-        '#type' => 'condition',
-      );
   }
 }
 
