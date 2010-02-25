@@ -3,6 +3,13 @@
 // $Id$
 
 /**
+ * @file
+ * Integrates quickpay.dk redirected payment service.
+ *
+ * Development sponsored by QuickPay.
+ */
+
+/**
  * Implementation of menu_hook()
  */
 function ec_quickpay_menu() {

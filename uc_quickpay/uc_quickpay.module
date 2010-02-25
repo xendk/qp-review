@@ -109,6 +109,11 @@ function uc_quickpay_form_alter(&$form, &$form_state, $form_id) {
   }
 }
 
+/**
+ * Form submission handler.
+ *
+ * Captures or cancels a transaction.
+ */
 function uc_quickpay_transaction_submit($form, &$form_state) {
   $order = uc_order_load($form_state['values']['order_id']);
   $payment = _uc_quickpay_get_last_transaction($order->order_id);
@@ -210,6 +215,12 @@ function uc_payment_method_quickpay($op, &$arg1) {
       return;
     case 'settings':
       $form = quickpay_settings_form();
+      $form['uc_autocapture'] = array(
+        '#type' => 'checkbox',
+        '#title' => t('Autocapture non-shippable'),
+        '#description' => t("Automatically capture payments on transactions that only contains products that aren't shippable. <em>WARNING</em>: Only use if all the available non-shippable products are in effect \"delivered\" on checkout (instant access subscriptions, for instance), this is a requirement from QuickPay/PBS. "),
+        '#default_value' => variable_get('uc_autocapture', FALSE),
+      );
       return $form;
     case 'order-delete':
       // FIXME: Delete associated transactions?
@@ -218,6 +229,16 @@ function uc_payment_method_quickpay($op, &$arg1) {
 
 // Form to build the submission to quickpay.dk
 function uc_quickpay_form(&$form_state, $order) {
+  if (variable_get('uc_autocapture', FALSE)) {
+    // Autocapture is only enabled for orders where no products are shippable
+    $autocapture = true;
+    foreach($order->products as $product) {
+      if($product->shippable) {
+        $autocapture = false;
+        break;
+      }
+    }
+  }
   $form = quickpay_hosted_form($order->order_total,
                                variable_get('uc_currency_code', ''),
                                $order->order_id,
@@ -225,13 +246,13 @@ function uc_quickpay_form(&$form_state, $order) {
                                url('cart/quickpay/complete/' .
                                    uc_cart_get_id(), array('absolute' => TRUE)),
                                url('cart/checkout/review', array('absolute' => TRUE)),
-                               url('quickpay/' . $order->order_id, array( 'absolute' => TRUE)));
+                               url('quickpay/' .
+                                   $order->order_id, array( 'absolute' => TRUE)),
+                               $autocapture);
   return $form;
 }
 
 function uc_quickpay_complete($cart_id = 0) {
-  // watchdog('2Checkout', 'Receiving new order notification for order !order_id.', array('!order_id' => check_plain($_POST['merchant_order_id'])));
-
   $order = uc_order_load($_SESSION['cart_order']);
 
   if ($order === FALSE || !in_array(uc_order_status_data($order->order_status, 'state'), array('in_checkout',
@@ -239,7 +260,6 @@ function uc_quickpay_complete($cart_id = 0) {
     print t('An error has occurred during payment.  Please contact us to ensure your order has submitted.');
     exit();
   }
-
 
   /*
   if (uc_payment_balance() == 0) {
@@ -308,11 +328,11 @@ function uc_quickpay_quickpay_popdown($order_id, $status) {
                                                                                               'post_checkout'))) {
     if ($order === FALSE)
       watchdog('quickpay', 'Unknown order @order_id in success page.',
-               array('@order' => $order_id), WATCHDOG_ERROR);
+        array('@order' => $order_id), WATCHDOG_ERROR);
       else
         watchdog('quickpay', 'Order @order_id has wrong state \'@state\'.',
-                 array('@order' => $order->order_id,
-                                     '@state' => uc_order_status_data($order->order_status, 'state')), WATCHDOG_ERROR);
+          array('@order' => $order->order_id,
+            '@state' => uc_order_status_data($order->order_status, 'state')), WATCHDOG_ERROR);
     return null;
   }
 
@@ -333,18 +353,33 @@ function uc_quickpay_quickpay_popdown($order_id, $status) {
 function _uc_quickpay_handle_transaction($order, $transaction) {
   switch (quickpay_result($transaction)) {
   case 'success': // Accepted
-    // FIXME: check if we're autocapturing and set it completed if that's the
-    // FIXME: case
-    uc_order_comment_save($order->order_id, 0,
-                          t('Payment authorized for !amount.',
-                            array('!amount' => $transaction['amount'])),
-                          'admin');
-    // Log a 0 amount payment, used to get the transaction id later.
-    uc_payment_enter($order->order_id, 'quickpay', 0, 0, array('qp_transaction' => $transaction['transaction']), 'Authorized for ' . $transaction['amount']);
-    watchdog('quickpay',
-             'Payment authorized for order %order.',
-             array('%order' => $order->order_id), WATCHDOG_NOTICE,
-             'admin/store/orders/' . $order->order_id);
+    $states = _quickpay_state_codes();
+    // If autocapture, transaction state is 'Captured' -- log payment
+    if($states[$transaction['state']] == "Captured") {
+      uc_payment_enter($order->order_id,
+                       'quickpay', $transaction['amount'], 0,
+                       array('qp_transaction' => $transaction['transaction']),
+                       'Quickpay transaction ID: '.$transaction['transaction']);
+      watchdog('quickpay',
+               'Payment captured for order %order.',
+               array('%order' => $order->order_id), WATCHDOG_NOTICE,
+               'admin/store/orders/' . $order->order_id);
+	} else { // Otherwise, save for later capture
+      uc_order_comment_save($order->order_id, 0,
+                            t('Payment authorized for !amount.',
+                              array('!amount' => $transaction['amount'])),
+                            'admin');
+      // Log a 0 amount payment, used to get the transaction id later.
+      uc_payment_enter($order->order_id,
+                       'quickpay', 0, 0,
+                       array('qp_transaction' => $transaction['transaction']),
+                       'Authorized for ' . $transaction['amount'] .
+                       '. Transaction ID: '.$transaction['transaction']);
+      watchdog('quickpay',
+               'Payment authorized for order %order.',
+               array('%order' => $order->order_id), WATCHDOG_NOTICE,
+               'admin/store/orders/' . $order->order_id);
+	}
     return TRUE;
     break;
   case 'failed': // Failed

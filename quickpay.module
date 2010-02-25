@@ -1,7 +1,16 @@
 <?php
 // $Id$
 
+/**
+ * @file
+ * Integrates quickpay.dk redirected payment service.
+ *
+ * Development sponsored by QuickPay.
+ */
+
+// The protocol version we implement.
 define('QUICKPAY_VERSION', '3');
+
 /**
  * Implementation of hook_menu().
  */
@@ -100,6 +109,14 @@ function quickpay_settings_form() {
     '#options' => $options,
   );
 
+  $form['quickpay_test_mode'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Test mode'),
+    '#description' => t('When active, transactions will be run in test mode, even if the QuickPay account is in production mode. Order ids will get a T appended.'),
+    '#default_value' => variable_get('quickpay_test_mode', FALSE),
+    '#options' => $options,
+  );
+
   $form['hosted'] = array(
     '#type' => 'fieldset',
     '#title' => t('Payment window options'),
@@ -112,7 +129,7 @@ function quickpay_settings_form() {
     '#description' => t('Whether to show the credit card from in a popup window.'),
   );
 
-  // FIXME: Remove, not used anymore.
+  // FIXME: Move to ec_quickpay, it's the only one using it.
   $form['hosted']['quickpay_hosted_link_message'] = array(
     '#type' => 'textfield',
     '#title' => t('Link page message'),
@@ -280,9 +297,29 @@ self.close();
 
 /**
  * Returns the form for redirecting users to quickpay.
+ *
+ * @param $amount
+ *   The payment amount.
+ * @param $currency
+ *   Currency of the payment.
+ * @param $order_id
+ *   An unique order id. Will be prefixed.
+ * @param $form_id
+ *   The (HTML) id of the form the button will be presented in.
+ *   Needed for the JavaScript.
+ * @param $continue_url
+ *   The absolute url to redirect to on successful payment.
+ * @param $cancel_url
+ *   Where to send the user if they cancel.
+ * @param $callback_url
+ *   Callback for QuickPay.
+ * @param $autocapture
+ *   Whether to attempt to capture payment immediately.
+ * @returns
+ *   A form fragment that will open the payment window.
  */
 function quickpay_hosted_form($amount, $currency, $order_id, $form_id, $continue_url,
-                              $cancel_url, $callback_url) {
+                              $cancel_url, $callback_url, $autocapture = FALSE) {
   $md5_order = array(
     'protocol',
     'msgtype',
@@ -302,7 +339,7 @@ function quickpay_hosted_form($amount, $currency, $order_id, $form_id, $continue
   );
 
   // Required variables.
-  $data['protocol'] = "3";
+  $data['protocol'] = QUICKPAY_VERSION;
   $data['msgtype'] = "authorize"; // TODO: support subscribe.
   $data['merchant'] = variable_get('quickpay_merchant', '');
   // FIXME: work together with i18n/locale
@@ -329,15 +366,18 @@ function quickpay_hosted_form($amount, $currency, $order_id, $form_id, $continue
   // End of required variables.
   $data['callbackurl'] = $callback_url;
 
-  // FIXME: should depend on whether order needs shipping, which means that
-  // the caller need to specify it.
-  $data['autocapture'] = '0';
+  $data['autocapture'] = ($autocapture) ? '1' : '0';
+
+  if(variable_get('quickpay_test_mode', FALSE)) {
+    $data['testmode'] = '1';
+    $data['ordernumber'] .= "T";
+  } else {
+    $data['testmode'] = '0';
+  }
 
   // Other possible variables:
   // $data['cardtypelock'];
   // $data['description'];
-  // $data['ipaddress'];
-  // $data['testmode'];
   // $data['CUSTOM_*'];
 
   $md5_string = "";
@@ -411,6 +451,7 @@ function quickpay_successful($txn) {
   }
   return $txn['qpstat'] == '000';
 }
+
 /**
  * Returns whether a given transaction was successful or not.
  * Use this to check a transaction, it returns 'success' when successful,
@@ -484,7 +525,7 @@ function quickpay_from_callback() {
   $txn = array();
   $fields = array('amount', 'time', 'ordernumber', 'pbsstat', 'qpstat',
                   'qpstatmsg', 'merchantemail', 'merchant', 'currency',
-                  'cardtype', 'transaction', 'cardnumber');
+                  'cardtype', 'transaction', 'cardnumber', 'state');
   foreach ($fields as $field) {
     $txn[$field] = $_POST[$field];
   }
@@ -538,11 +579,22 @@ function quickpay_authorize($carddata, $orderid, $amount, $currency = NULL,
   $request_data = _quickpay_carddata($carddata);
   list($request_data['amount'], $request_data['currency']) =
        _quickpay_validate_amount($amount, $currency);
-  if (!$request_data['amount'])
+
+  if (!$request_data['amount']) {
     return FALSE;
+  }
+  
   $request_data['autocapture'] = $autocapture ? '1' : '0';
   $request_data['ordernumber'] = variable_get('quickpay_order_prefix', '') .
     $orderid;
+
+  if(variable_get('quickpay_test_mode', FALSE)) {
+    $data['testmode'] = '1';
+    $data['ordernumber'] .= "T";
+  } else {
+    $data['testmode'] = '0';
+  }
+
   return _quickpay_request('authorize', $request_data);
 }
 
@@ -579,11 +631,21 @@ function quickpay_recurring($txn, $orderid, $amount, $currency = NULL, $autocapt
   $request_data = array('transaction' => $txn['transaction']);
   list($request_data['amount'], $request_data['currency']) =
        _quickpay_validate_amount($amount, $currency);
-  if (!$request_data['amount'])
+
+  if (!$request_data['amount']) {
     return FALSE;
+  }
   $request_data['autocapture'] = $autocapture ? '1' : '0';
   $request_data['ordernumber'] = variable_get('quickpay_order_prefix', '') .
     $orderid;
+
+  if(variable_get('quickpay_test_mode', FALSE)) {
+    $data['testmode'] = '1';
+    $data['ordernumber'] .= "T";
+  } else {
+    $data['testmode'] = '0';
+  }
+
   return _quickpay_request('recurring', $request_data);
 }
 
@@ -743,22 +805,22 @@ function _quickpay_request($msg_type, $request_data) {
 function _quickpay_validate($data) {
   static $fields =
     array(
-          'protocol' => '/^3$/',
-          'msgtype' => '/^[a-z]+$/',
-          'merchant' => '/^[0-9]{8}$/',
-          'ordernumber' => '/^[\w_]{4,20}$/',
-          'amount' => '/^[0-9]{1,10}$/',
-          'currency' => '/^[A-Z]{3}$/',
-          'autocapture' => '/^[0-1]{1}$/',
-          'cardnumber' => '/^[0-9]{13,19}$/',
-          'expirationdate' => '/^[0-9]{4}$/',
-          'cvd' => '/^[0-9]{0,4}$/',
-          'cardtypelock' => '/^[a-zA-Z,]{0,128}$/',
-          'transaction' => '/^[0-9]{1,32}$/',
-          'description' => '/^[\w _\-\.]{0,20}$/',
-          'md5check' => '/^[a-z0-9]{32}$/',
-          'CUSTOM_' => '/^[\w _\-\.]{0,20}$/'
-          );
+      'protocol' => '/^' . QUICKPAY_VERSION. '$/',
+      'msgtype' => '/^[a-z]+$/',
+      'merchant' => '/^[0-9]{8}$/',
+      'ordernumber' => '/^[\w_]{4,20}$/',
+      'amount' => '/^[0-9]{1,10}$/',
+      'currency' => '/^[A-Z]{3}$/',
+      'autocapture' => '/^[0-1]{1}$/',
+      'cardnumber' => '/^[0-9]{13,19}$/',
+      'expirationdate' => '/^[0-9]{4}$/',
+      'cvd' => '/^[0-9]{0,4}$/',
+      'cardtypelock' => '/^[a-zA-Z,]{0,128}$/',
+      'transaction' => '/^[0-9]{1,32}$/',
+      'description' => '/^[\w _\-\.]{0,20}$/',
+      'md5check' => '/^[a-z0-9]{32}$/',
+      'CUSTOM_' => '/^[\w _\-\.]{0,20}$/'
+    );
 
   foreach ($data as $field => $value) {
     // No NULL values please
