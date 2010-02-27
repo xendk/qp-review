@@ -261,16 +261,6 @@ function uc_quickpay_complete($cart_id = 0) {
     exit();
   }
 
-  /*
-  if (uc_payment_balance() == 0) {
-    // FIXME: Do we do anything if we're paid?
-  }
-  else {
-    drupal_set_message(t('Your order will be processed as soon as your payment clears at 2Checkout.com.'));
-    uc_order_comment_save($order_id, 0, t('!type payment is pending approval at 2Checkout.com.', array('!type' => $_POST['pay_method'] == 'CC' ? t('Credit card') : t('eCheck'))), 'admin');
-  }
-  */
-
   $_SESSION['last_order'] = $order->order_id;
   $output .= uc_cart_complete_sale($order, variable_get('uc_new_customer_login', FALSE));
 

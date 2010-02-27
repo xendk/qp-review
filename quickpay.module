@@ -114,7 +114,6 @@ function quickpay_settings_form() {
     '#title' => t('Test mode'),
     '#description' => t('When active, transactions will be run in test mode, even if the QuickPay account is in production mode. Order ids will get a T appended.'),
     '#default_value' => variable_get('quickpay_test_mode', FALSE),
-    '#options' => $options,
   );
 
   $form['hosted'] = array(
@@ -803,7 +802,7 @@ function _quickpay_request($msg_type, $request_data) {
  * @returns boolean TRUE if the data is valid.
  */
 function _quickpay_validate($data) {
-  static $fields =
+  $fields =
     array(
       'protocol' => '/^' . QUICKPAY_VERSION. '$/',
       'msgtype' => '/^[a-z]+$/',
