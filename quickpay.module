@@ -70,6 +70,8 @@ function quickpay_cards($list) {
 }
 
 function quickpay_settings_form() {
+  drupal_add_css(drupal_get_path('module', 'quickpay') . '/quickpay.css');
+
   $form['quickpay_merchant'] = array(
     '#type' => 'textfield',
     '#title' => t('Merchant number'),
@@ -107,6 +109,7 @@ function quickpay_settings_form() {
     '#description' => t('Which cards or other payment methods to show as accepted in the block. NOTE: Some require special agreements.'),
     '#default_value' => variable_get('quickpay_accepted_cards', array('dan')),
     '#options' => $options,
+    '#attributes' => array('class' => 'quickpay-cards'),
   );
 
   $form['quickpay_test_mode'] = array(

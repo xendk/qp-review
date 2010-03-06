@@ -11,17 +11,11 @@
   float: left;
 }
 
-.block-quickpay .quickpay-cards img.card-5,
-.block-quickpay .quickpay-cards img.card-9,
-.block-quickpay .quickpay-cards img.card-12 {
-  clear: left;
+.quickpay-cards img {
+  vertical-align: middle;
 }
 
 /* Ubercart */
 #payment-pane .quickpay-cards {
   display: inline;
-}
-
-#payment-pane .quickpay-cards img {
-  vertical-align: middle;
 }
