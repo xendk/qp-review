@@ -39,6 +39,11 @@ function ec_quickpay_menu() {
   return $items;
 }
 
+/**
+ * Settings form.
+ *
+ * This just reuses the standard form without modification.
+ */
 function ec_quickpay_settings() {
   $form = system_settings_form(quickpay_settings_form());
   return $form;
@@ -46,6 +51,8 @@ function ec_quickpay_settings() {
 
 /**
  * Implementation of hook_receipt_info().
+ *
+ * Tell eC about our payment gateway.
  */
 function ec_quickpay_receipt_info() {
   $currency = quickpay_supported_currencies();
@@ -92,6 +99,8 @@ function ec_quickpay_receipt_info() {
 
 /**
  * Implementation of hook_receipt_payment_url().
+ *
+ * Redirects to a local form page, as QuickPay needs a post.
  */
 function ec_quickpay_receipt_payment_url($receipt, $atype, $object) {
   $id = $receipt->erid;
@@ -102,6 +111,9 @@ function ec_quickpay_receipt_payment_url($receipt, $atype, $object) {
   return 'quickpay/payment/' . $id;
 }
 
+/**
+ * A form with a button to proceed to QuickPay, to complete the payment.
+ */
 function ec_quickpay_form(&$form_state, $receipt, $invoice_no) {
   $total = $receipt->amount;
   $currency = $receipt->currency;
@@ -137,6 +149,8 @@ function ec_quickpay_form(&$form_state, $receipt, $invoice_no) {
 
 /**
  * Implementation of hook_quickpay_callback().
+ *
+ * Handles the callback and updates the receipt.
  */
 function ec_quickpay_quickpay_callback($erid, $transaction) {
   $args = func_get_args();
@@ -188,13 +202,16 @@ function ec_quickpay_quickpay_callback($erid, $transaction) {
 /**
  * Implementation of hook_ec_receipt_status().
  *
+ * When QuickPay receipts change status to received, touch any
+ * transaction allocations, to make them allocate the payment and
+ * trigger transaction processing.
  */
 function ec_quickpay_ec_receipt_status($receipt, $original) {
-  // Kick the allocation to in_picking..
   if ($receipt->type != 'quickpay') {
     return;
   }
 
+  // Kick the allocation to in_picking..
   if ($receipt->status == RECEIPT_STATUS_RECEIVED && !empty($receipt->allocation)) {
     foreach ($receipt->allocation as $alloc) {
       if ($alloc['type'] == 'transaction') {
@@ -206,6 +223,11 @@ function ec_quickpay_ec_receipt_status($receipt, $original) {
   }
 }
 
+/**
+ * Implementation of hook_receipt_save().
+ *
+ * Stores the allocations of the receipt so we can look it up later.
+ */
 function ec_quickpay_receipt_save($receipt) {
   // Store link between allocation and receipt for later use.
   db_query('DELETE FROM {ec_quickpay_receipt_transaction} WHERE erid = %d', $receipt->erid);
@@ -214,6 +236,11 @@ function ec_quickpay_receipt_save($receipt) {
   }
 }
 
+/**
+ * Implementation of hook_form_FORM_ID_alter().
+ *
+ * Adds links to capture/cancel receipt on receipt view.
+ */
 function ec_quickpay_form_ec_receipt_view_form_alter(&$form, &$form_state) {
   if ($form['receipt']['#value']->type == 'quickpay') {
       $qp_transaction = $form['receipt']['#value']->extern_id;
@@ -253,6 +280,9 @@ function ec_quickpay_form_ec_receipt_view_form_alter(&$form, &$form_state) {
   }
 }
 
+/**
+ * Submit handler for receipt view.
+ */
 function ec_quickpay_transaction_submit($form, &$form_state) {
   $receipt = $form['receipt']['#value'];
 
@@ -325,9 +355,13 @@ function ec_quickpay_quickpay_popdown($erid, $status) {
   return $url;
 }
 
+/**
+ * Implementation of hook_link().
+ *
+ * Add links to transactions to capture related QuickPay receipts.
+ */
 function ec_quickpay_link($type, $object, $teaser = FALSE) {
   $links = array();
-  // dpm($object);
   if ($type == 'ec_receipt_allocation' && user_access(EC_PERM_MANAGE) &&
       $object->payment_method == 'quickpay' && $object->status == RECEIPT_STATUS_RECEIVED) {
     /*
