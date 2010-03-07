@@ -2,6 +2,11 @@
 // $Id$
 
 /**
+ * @file
+ * Installation and update functionality for the eC4 QuickPay module.
+ */
+
+/**
  * Implementation of hook_install().
  */
 function ec_quickpay_install() {

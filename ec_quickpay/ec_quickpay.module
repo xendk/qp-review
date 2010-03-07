@@ -126,7 +126,8 @@ function ec_quickpay_form(&$form_state, $receipt, $invoice_no) {
                                        'In order to complete the payment, continue to QuickPay to enter your credit card information.') . "</p>",
       '#weight' => -5,
     );
-  } else {
+  }
+  else {
     // TODO: Better error handling.
     drupal_set_message(t('Internal error'), 'error');
   }
@@ -263,7 +264,8 @@ function ec_quickpay_transaction_submit($form, &$form_state) {
       $action = 'Capture';
       $amount = $qptxn['amount'];
       $did = 'captured';
-    } else {
+    }
+    else {
       $qptxn = quickpay_cancel(array('transaction' => $receipt->extern_id));
       $action = 'Cancel';
       $amount = 0;
@@ -274,7 +276,8 @@ function ec_quickpay_transaction_submit($form, &$form_state) {
       drupal_set_message(t("Successfully !did.", array('!did' => $did)));
       $receipt->status = RECEIPT_STATUS_COMPLETED;
       ec_receipt_save($receipt);
-    } else {
+    }
+    else {
       $error = _quickpay_qpstat_codes($qptxn['qpstat']);
       drupal_set_message(t('!action failed, reason given: %error',
                            array('%error' => $error, '!action' => $action)), 'error');
@@ -314,7 +317,8 @@ function ec_quickpay_quickpay_popdown($erid, $status) {
       $url = "user/$user->uid/store";
     }
     $url = url($url, array('absolute' => TRUE));
-  } else { 
+  }
+  else { 
     // FIXME: configurable errorpage?
     $url = url('store/payment/quickpay/' . $erid . '/cancel', array('absolute' => TRUE));
   }
@@ -374,7 +378,8 @@ function ec_quickpay_transaction_capture($transaction, $interactive = TRUE) {
         }
         $receipt->status = RECEIPT_STATUS_COMPLETED;
         ec_receipt_save($receipt);
-      } else {
+      }
+      else {
         $error = _quickpay_qpstat_codes($qptxn['qpstat']);
         if ($interactive) {
           drupal_set_message(t('Capture failed, type: %error, message: %message',

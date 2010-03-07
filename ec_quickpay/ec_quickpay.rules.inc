@@ -3,6 +3,11 @@
 // $Id$
 
 /**
+ * @file
+ * Extra eC4 QuickPay conditions for the rules module.
+ */
+
+/**
  * Implementation of hook_rules_condition_info().
  */
 function ec_quickpay_rules_condition_info() {

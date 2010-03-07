@@ -187,7 +187,8 @@ function quickpay_api_success_message($txn) {
     $message = variable_get('quickpay_api_success_message', 'Payment completed, we will process your order as soon as possible. Your order number: %id');
     if ($message != '<none>')
       return t($message);
-  } else {
+  }
+  else {
     $message = variable_get('quickpay_api_success_message', 'Payment completed, we will process your order as soon as possible. Your order number: %id');
     if ($message != '<none>')
       return t($message, array('!uid' => $txn->uid,
@@ -200,13 +201,13 @@ function quickpay_api_success_message($txn) {
  * Implementation of hook_simpletest().
  */
 function quickpay_simpletest() {
-  $dir = drupal_get_path('module', 'quickpay'). '/tests';
+  $dir = drupal_get_path('module', 'quickpay') . '/tests';
   $tests = file_scan_directory($dir, '\.test$');
   return array_keys($tests);
 }
 
 function quickpay_block($op = 'list', $delta = 0, $edit = array()) {
-  switch($op) {
+  switch ($op) {
   case 'list':
     $blocks[0] = array('info' => t('Shows QuickPay supported payment methods.'));
     return $blocks;
@@ -325,8 +326,10 @@ self.close();
 // -->
 </script></head><body></body></html>';
     return NULL;
-  } else
+  }
+  else {
     drupal_access_denied();
+  }
 }
 
 /**
@@ -402,10 +405,11 @@ function quickpay_hosted_form($amount, $currency, $order_id, $form_id, $continue
 
   $data['autocapture'] = ($autocapture) ? '1' : '0';
 
-  if(variable_get('quickpay_test_mode', FALSE)) {
+  if (variable_get('quickpay_test_mode', FALSE)) {
     $data['testmode'] = '1';
     $data['ordernumber'] .= "T";
-  } else {
+  }
+  else {
     $data['testmode'] = '0';
   }
 
@@ -623,10 +627,11 @@ function quickpay_authorize($carddata, $orderid, $amount, $currency = NULL,
   $request_data['ordernumber'] = variable_get('quickpay_order_prefix', '') .
     $orderid;
 
-  if(variable_get('quickpay_test_mode', FALSE)) {
+  if (variable_get('quickpay_test_mode', FALSE)) {
     $data['testmode'] = '1';
     $data['ordernumber'] .= "T";
-  } else {
+  }
+  else {
     $data['testmode'] = '0';
   }
 
@@ -674,10 +679,11 @@ function quickpay_recurring($txn, $orderid, $amount, $currency = NULL, $autocapt
   $request_data['ordernumber'] = variable_get('quickpay_order_prefix', '') .
     $orderid;
 
-  if(variable_get('quickpay_test_mode', FALSE)) {
+  if (variable_get('quickpay_test_mode', FALSE)) {
     $data['testmode'] = '1';
     $data['ordernumber'] .= "T";
-  } else {
+  }
+  else {
     $data['testmode'] = '0';
   }
 
@@ -840,7 +846,7 @@ function _quickpay_request($msg_type, $request_data) {
 function _quickpay_validate($data) {
   $fields =
     array(
-      'protocol' => '/^' . QUICKPAY_VERSION. '$/',
+      'protocol' => '/^' . QUICKPAY_VERSION . '$/',
       'msgtype' => '/^[a-z]+$/',
       'merchant' => '/^[0-9]{8}$/',
       'ordernumber' => '/^[\w_]{4,20}$/',
@@ -862,7 +868,8 @@ function _quickpay_validate($data) {
     if (is_NULL($value)) {
       _quickpay_error(t('%field cannot be NULL', array('%field' => $field)));
       return FALSE;
-    } elseif ($fields[$field]) {
+    }
+    elseif ($fields[$field]) {
       if (!preg_match($fields[$field], $value)) {
         // We're not logging the actual value, as that might be
         // sensitive information
@@ -870,13 +877,15 @@ function _quickpay_validate($data) {
                           array('%field' => $field)));
         return FALSE;
       }
-    } elseif (preg_match('/^CUSTOM_/', $field)) {
+    }
+    elseif (preg_match('/^CUSTOM_/', $field)) {
       if (!preg_match($fields['CUSTOM_'], $value)) {
         _quickpay_error(t('%field didn\'t pass validation.',
                           array('%field' => $field)));
         return FALSE;
       }
-    } else {
+    }
+    else {
       _quickpay_error(t('Unknown %field.',
                         array('%field' => $field)));
       return FALSE;
@@ -917,7 +926,8 @@ function _quickpay_response($response) {
         $result[$cn->nodeName][intval($i)][$hn->nodeName] = $hn->nodeValue;
       }
       $i++;
-    } else {
+    }
+    else {
       $result[$cn->nodeName] = $cn->nodeValue;
     }
   }
@@ -1030,8 +1040,10 @@ function _quickpay_qpstat_codes($code = NULL) {
       '007' => t('Error at QuickPay'),
       '008' => t('Errors in parameteres sent to QuickPay'),
     );
-  if ($code)
+  if ($code) {
     return $codes[$code];
-  else
+  }
+  else {
     return $codes;
+  }
 }
