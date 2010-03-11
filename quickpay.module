@@ -46,27 +46,28 @@ function quickpay_all_cards() {
 edankort:edan:eDankort:edan.jpg
 visa:visa:Visa:visa.jpg
 visa-dk::Visa, issued in Denmark:visa.jpg
-3d-visa::Visa, issued in Denmark, using 3D-Secure:
-3d-visa-dk::Visa, using 3D-Secure:
+3d-visa::Visa, issued in Denmark, using 3D-Secure:3d-visa.gif
+3d-visa-dk::Visa, using 3D-Secure:3d-visa.gif
 visa-electron:visael:Visa Electron:visaelectron.jpg
 visa-electron-dk::Visa Electron, issued in Denmark:visaelectron.jpg
 3d-visa-electron::Visa Electron, using 3D-Secure:
 3d-visa-electron-dk::Visa Electron, issued in Denmark, using 3D-Secure:
 mastercard:mastercard:Mastercard:mastercard.jpg
-mastercard-dk::Mastercard, issued in Denmark:
+mastercard-dk::Mastercard, issued in Denmark:mastercard.jpg
 3d-mastercard::Mastercard, using 3D-Secure:
 3d-mastercard-dk::Mastercard, issued in Denmark, using 3D-Secure:
-3d-maestro:maestro:Maestro:maestro.gif
-3d-maestro-dk::Maestro, issued in Denmark:
+3d-maestro:maestro:Maestro:3d-maestro.gif
+3d-maestro-dk::Maestro, issued in Denmark:3d-maestro.gif
 jcb:jcb:JCB:jcb.jpg
-3d-jcb::JCB, using 3D-Secure:
+3d-jcb::JCB, using 3D-Secure:3d-jcb.gif
 diners:din:Diners:diners.jpg
 diners-dk::Diners, issued in Denmark:diners.jpg
 american-express:amex:American Express:amexpress.jpg
 american-express-dk::American Express, issued in Denmark:amexpress.jpg
 danske-dk:danskebank:Danske Netbetaling:danskebank.jpg
 nordea-dk:nordea:Nordea Netbetaling:nordea.jpg
-fbg1886:ff:Forbrugsforeningen:forbrugsforeningen.gif";
+fbg1886:ff:Forbrugsforeningen:forbrugsforeningen.gif
+ikano:ikano:Ikano:ikano.jpg";
     foreach (explode("\n", $tmp) as $card) {
       list($key, $old_key, $name, $img) = explode(':', $card);
       $cards[$key] = array(
@@ -260,8 +261,8 @@ function theme_quickpay_cards($cards) {
     if ($card['image'] and !$rendered[$card['image']]) {
       $output .= theme('image', $card['image'], $card['name'], $card['name'],
                  array('class' => 'card-' . $i++), TRUE);
+      $rendered[$card['image']] = TRUE;
     }
-    $rendered[$card['image']] = TRUE;
   }
   $output .= '</div>';
   return $output;
@@ -413,7 +414,9 @@ function quickpay_hosted_form($amount, $currency, $order_id, $form_id, $continue
     $data['testmode'] = '0';
   }
 
-  $data['cardtypelock'] = join(',', array_keys(quickpay_supported_cards()));
+  $cards = quickpay_supported_cards();
+  unset($cards['ikano']); // Aren't supported in cardtypelock.
+  $data['cardtypelock'] = join(',', array_keys($cards));
   
   // Other possible variables:
   // $data['description'];
