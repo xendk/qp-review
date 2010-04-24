@@ -155,8 +155,20 @@ function quickpay_settings_form() {
     '#description' => t('The message displayed on the page before sending the customer to QuickPays credit card form. Subject to translation.')
   );
 
-  $languages = array('da' => t('Danish'), 'en' => t('English'),
-                     'no' => t('Norwegian'), 'se' => t('Swedish'));
+  $languages = array(
+    'da' => t('Danish'),
+    'de' => t('German'),
+    'en' => t('English'),
+    'fo' => t('Faeroese'),
+    'fr' => t('French'),
+    'gl' => t('Greenlandish'),
+    'it' => t('Italian'),
+    'no' => t('Norwegian'),
+    'nl' => t('Dutch'),
+    'pl' => t('Polish'),
+    'se' => t('Swedish'),
+  );
+
   // FIXME: work together with i18n
   $form['hosted']['quickpay_hosted_language'] = array(
     '#type' => 'select',
