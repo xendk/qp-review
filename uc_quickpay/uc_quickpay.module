@@ -72,12 +72,10 @@ function uc_quickpay_form_alter(&$form, &$form_state, $form_id) {
         $form['quickpay']['admin'] =
         array('#type' => 'markup',
               '#value' => l(t('Quickpay administration'),
-                            'https://secure.quickpay.dk/payments/index.php',
+                            'https://manager.quickpay.dk/',
                             array(
-                              'attributes' => array('target' => 'ec_quickpay'),
-                              'query' => 'searchType=word&keyword=' .
-                              $payment->qp_transaction .
-                              '&transaction=1&showDeleted=0')));
+                              'attributes' => array('target' => 'uc_quickpay'),
+                              )));
 
         $balance = uc_payment_balance($order);
 

@@ -248,13 +248,11 @@ function ec_quickpay_form_ec_receipt_view_form_alter(&$form, &$form_state) {
       $form['quickpay']['admin'] =
         array('#type' => 'markup',
               '#value' => l(t('Quickpay administration'), 
-                            'https://secure.quickpay.dk/payments/index.php',
+                            'https://manager.quickpay.dk/',
                             array(
                               'attributes' => array(
                                 'target' => 'ec_quickpay'
-                              ),
-                              'query' => 'searchType=word&keyword=' . $qp_transaction .
-                              '&transaction=1&showDeleted=0')));
+                              ))));
                                   
       if ($form['receipt']['#value']->status == RECEIPT_STATUS_RECEIVED) {
         // payment received.
