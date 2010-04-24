@@ -119,8 +119,10 @@ function uc_quickpay_transaction_submit($form, &$form_state) {
   $payment = _uc_quickpay_get_last_transaction($order->order_id);
   if (in_array($form_state['clicked_button']['#action'], array('capture', 'cancel'))) {
     if ($form_state['clicked_button']['#action'] == 'capture') {
-      $qptxn = quickpay_capture(array('transaction' => $payment->qp_transaction),
-                              $order->order_total);
+      $qptxn = quickpay_capture(array(
+                 'transaction' => $payment->qp_transaction,
+                 'currency' => variable_get('uc_currency_code', ''),
+               ), $order->order_total);
       $action = 'Capture';
       $amount = $qptxn['amount'];
       $did = 'captured';

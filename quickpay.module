@@ -713,7 +713,8 @@ function quickpay_recurring($txn, $orderid, $amount, $currency = NULL, $autocapt
  * but not more.
  *
  * @param $txn
- *   the previously authorized transaction
+ *   the previously authorized transaction. Must contain
+ *   'transaction' and 'currency' keys
  * @param
  *   $amount the amount to transfer
  * @return
@@ -975,12 +976,9 @@ function _quickpay_validate_currency($currency) {
  *
  * Returns an array of the amount multiplied to integer, if the currency
  * demands it, and the currency itself.
- * Uses default currency if $currency is NULL.
  * Uses arbitrary precision if available.
  */
 function _quickpay_validate_amount($amount, $currency) {
-  if (!$currency)
-    $currency = variable_get('quickpay_default_currency', NULL);
   $multiplyer = _quickpay_validate_currency($currency);
   if (!$multiplyer)
     return array(FALSE, FALSE);
