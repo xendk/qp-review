@@ -3,6 +3,13 @@
 // $Id$
 
 /**
+ * @file
+ * Integrates quickpay.dk redirected payment service.
+ *
+ * Development sponsored by QuickPay.
+ */
+
+/**
  * Implementation of menu_hook()
  */
 function ec_quickpay_menu() {
@@ -32,6 +39,11 @@ function ec_quickpay_menu() {
   return $items;
 }
 
+/**
+ * Settings form.
+ *
+ * This just reuses the standard form without modification.
+ */
 function ec_quickpay_settings() {
   $form = system_settings_form(quickpay_settings_form());
   return $form;
@@ -39,6 +51,8 @@ function ec_quickpay_settings() {
 
 /**
  * Implementation of hook_receipt_info().
+ *
+ * Tell eC about our payment gateway.
  */
 function ec_quickpay_receipt_info() {
   $currency = quickpay_supported_currencies();
@@ -58,11 +72,9 @@ function ec_quickpay_receipt_info() {
       */
       'module' => array('ec_quickpay'),
       'currencies_supported' => $currency,
-      /*
       'gateway_requirements' => array(
-        t('TODO: Ask QuickPay if they want any requirements shown here.'),
+        // t('TODO: Ask QuickPay if they want any requirements shown here.'),
       ),
-      */
     ),
   );
 
@@ -79,7 +91,7 @@ function ec_quickpay_receipt_info() {
   */
   }
   else {
-    array_unshift($rtypes['quickpay']['gateway_requirements'], t('Before QuickPay can you be used, the Settings need to be loaded into the system. See the !settings page for configuring QuickPay', array('!settings' => l(t('settings'), 'admin/ecsettings/rtypes/quickpay/settings', array('query' => drupal_get_destination())))));
+    array_unshift($rtypes['quickpay']['gateway_requirements'], t('Before the QuickPay payment gateway can be used, the module needs to be configured. See the !settings page for configuring QuickPay', array('!settings' => l(t('settings'), 'admin/ecsettings/rtypes/quickpay/settings', array('query' => drupal_get_destination())))));
   }
 
   return $rtypes;
@@ -87,6 +99,8 @@ function ec_quickpay_receipt_info() {
 
 /**
  * Implementation of hook_receipt_payment_url().
+ *
+ * Redirects to a local form page, as QuickPay needs a post.
  */
 function ec_quickpay_receipt_payment_url($receipt, $atype, $object) {
   $id = $receipt->erid;
@@ -97,6 +111,9 @@ function ec_quickpay_receipt_payment_url($receipt, $atype, $object) {
   return 'quickpay/payment/' . $id;
 }
 
+/**
+ * A form with a button to proceed to QuickPay, to complete the payment.
+ */
 function ec_quickpay_form(&$form_state, $receipt, $invoice_no) {
   $total = $receipt->amount;
   $currency = $receipt->currency;
@@ -121,7 +138,8 @@ function ec_quickpay_form(&$form_state, $receipt, $invoice_no) {
                                        'In order to complete the payment, continue to QuickPay to enter your credit card information.') . "</p>",
       '#weight' => -5,
     );
-  } else {
+  }
+  else {
     // TODO: Better error handling.
     drupal_set_message(t('Internal error'), 'error');
   }
@@ -131,6 +149,8 @@ function ec_quickpay_form(&$form_state, $receipt, $invoice_no) {
 
 /**
  * Implementation of hook_quickpay_callback().
+ *
+ * Handles the callback and updates the receipt.
  */
 function ec_quickpay_quickpay_callback($erid, $transaction) {
   $args = func_get_args();
@@ -182,13 +202,16 @@ function ec_quickpay_quickpay_callback($erid, $transaction) {
 /**
  * Implementation of hook_ec_receipt_status().
  *
+ * When QuickPay receipts change status to received, touch any
+ * transaction allocations, to make them allocate the payment and
+ * trigger transaction processing.
  */
 function ec_quickpay_ec_receipt_status($receipt, $original) {
-  // Kick the allocation to in_picking..
   if ($receipt->type != 'quickpay') {
     return;
   }
 
+  // Kick the allocation to in_picking..
   if ($receipt->status == RECEIPT_STATUS_RECEIVED && !empty($receipt->allocation)) {
     foreach ($receipt->allocation as $alloc) {
       if ($alloc['type'] == 'transaction') {
@@ -200,6 +223,11 @@ function ec_quickpay_ec_receipt_status($receipt, $original) {
   }
 }
 
+/**
+ * Implementation of hook_receipt_save().
+ *
+ * Stores the allocations of the receipt so we can look it up later.
+ */
 function ec_quickpay_receipt_save($receipt) {
   // Store link between allocation and receipt for later use.
   db_query('DELETE FROM {ec_quickpay_receipt_transaction} WHERE erid = %d', $receipt->erid);
@@ -208,6 +236,11 @@ function ec_quickpay_receipt_save($receipt) {
   }
 }
 
+/**
+ * Implementation of hook_form_FORM_ID_alter().
+ *
+ * Adds links to capture/cancel receipt on receipt view.
+ */
 function ec_quickpay_form_ec_receipt_view_form_alter(&$form, &$form_state) {
   if ($form['receipt']['#value']->type == 'quickpay') {
       $qp_transaction = $form['receipt']['#value']->extern_id;
@@ -215,13 +248,11 @@ function ec_quickpay_form_ec_receipt_view_form_alter(&$form, &$form_state) {
       $form['quickpay']['admin'] =
         array('#type' => 'markup',
               '#value' => l(t('Quickpay administration'), 
-                            'https://secure.quickpay.dk/payments/index.php',
+                            'https://manager.quickpay.dk/',
                             array(
                               'attributes' => array(
                                 'target' => 'ec_quickpay'
-                              ),
-                              'query' => 'searchType=word&keyword=' . $qp_transaction .
-                              '&transaction=1&showDeleted=0')));
+                              ))));
                                   
       if ($form['receipt']['#value']->status == RECEIPT_STATUS_RECEIVED) {
         // payment received.
@@ -247,6 +278,9 @@ function ec_quickpay_form_ec_receipt_view_form_alter(&$form, &$form_state) {
   }
 }
 
+/**
+ * Submit handler for receipt view.
+ */
 function ec_quickpay_transaction_submit($form, &$form_state) {
   $receipt = $form['receipt']['#value'];
 
@@ -258,7 +292,8 @@ function ec_quickpay_transaction_submit($form, &$form_state) {
       $action = 'Capture';
       $amount = $qptxn['amount'];
       $did = 'captured';
-    } else {
+    }
+    else {
       $qptxn = quickpay_cancel(array('transaction' => $receipt->extern_id));
       $action = 'Cancel';
       $amount = 0;
@@ -269,7 +304,8 @@ function ec_quickpay_transaction_submit($form, &$form_state) {
       drupal_set_message(t("Successfully !did.", array('!did' => $did)));
       $receipt->status = RECEIPT_STATUS_COMPLETED;
       ec_receipt_save($receipt);
-    } else {
+    }
+    else {
       $error = _quickpay_qpstat_codes($qptxn['qpstat']);
       drupal_set_message(t('!action failed, reason given: %error',
                            array('%error' => $error, '!action' => $action)), 'error');
@@ -309,16 +345,21 @@ function ec_quickpay_quickpay_popdown($erid, $status) {
       $url = "user/$user->uid/store";
     }
     $url = url($url, array('absolute' => TRUE));
-  } else { 
+  }
+  else { 
     // FIXME: configurable errorpage?
     $url = url('store/payment/quickpay/' . $erid . '/cancel', array('absolute' => TRUE));
   }
   return $url;
 }
 
+/**
+ * Implementation of hook_link().
+ *
+ * Add links to transactions to capture related QuickPay receipts.
+ */
 function ec_quickpay_link($type, $object, $teaser = FALSE) {
   $links = array();
-  // dpm($object);
   if ($type == 'ec_receipt_allocation' && user_access(EC_PERM_MANAGE) &&
       $object->payment_method == 'quickpay' && $object->status == RECEIPT_STATUS_RECEIVED) {
     /*
@@ -353,8 +394,9 @@ function ec_quickpay_link($type, $object, $teaser = FALSE) {
 
 /**
  * Attempt capture on all QuickPay receipts on a transaction.
+ *
  */
-function ec_quickpay_transaction_capture($transaction, $goto = TRUE) {
+function ec_quickpay_transaction_capture($transaction, $interactive = TRUE) {
   $res = db_query("SELECT eqrt.erid, er.status, er.type FROM {ec_quickpay_receipt_transaction} eqrt LEFT JOIN {ec_receipt} er USING (erid) WHERE eqrt.type = 'transaction' AND eqrt.etid = %d", $transaction->txnid);
   while ($row = db_fetch_object($res)) {
     $receipt = ec_receipt_load($row->erid);
@@ -363,51 +405,30 @@ function ec_quickpay_transaction_capture($transaction, $goto = TRUE) {
                                       'currency' => $receipt->currency),
                                 $receipt->amount);
       if (quickpay_successful($qptxn)) {
-        drupal_set_message(t('Successfully captured.'));
+        if ($interactive) {
+          drupal_set_message(t('Successfully captured.'));
+        }
         $receipt->status = RECEIPT_STATUS_COMPLETED;
         ec_receipt_save($receipt);
-      } else {
+      }
+      else {
         $error = _quickpay_qpstat_codes($qptxn['qpstat']);
-        drupal_set_message(t('Capture failed, reason given: %error',
-                             array('%error' => $error)), 'error');
+        if ($interactive) {
+          drupal_set_message(t('Capture failed, type: %error, message: %message',
+                               array('%error' => $error,
+                                     '%message' => $qptxn['qpstatqpstatmsg'])), 'error');
+        }
+        watchdog('quickpay', 'Capture failed for transaction !txnid, type: %error, message: %message',
+                 array('%error' => $error, '%message' => $qptxn['qpstatmsg'],
+                       '!txnid' => $transaction->txnid),
+                 WATCHDOG_ERROR);
         $receipt->status = RECEIPT_STATUS_FAILED;
         ec_receipt_save($receipt);
       }
     }
   }
-  if ($goto) {
+  if ($interactive) {
     drupal_goto('admin/transaction/' . $transaction->txnid);
-  }
-}
-
-function ec_quickpay_rules_import(&$rule) {
-  // Examine the rule, e.g. check if it is event-triggered.
-  if ($rule['#set'] === 'event_ec_store_event_transactions_bef_save' and
-      $rule['#label'] == 'Mark shipped product as completed') {
-    $rule['#conditions'][] =
-      array(
-        '#weight' => 0,
-        '#info' => array(
-          'label' => 'Transaction allocation status',
-          'arguments' => array(
-            'txn' => array (
-              'type' => 'transaction',
-              'label' => 'Transaction',
-            ),
-          ),
-          'module' => 'Transaction',
-        ),
-        '#name' => 'ec_store_condition_allocation_status',
-        '#settings' => array(
-          'allocation' => array (
-            2 => '2',
-          ),
-          '#argument map' => array (
-            'txn' => 'txn',
-          ),
-        ),
-        '#type' => 'condition',
-      );
   }
 }
 

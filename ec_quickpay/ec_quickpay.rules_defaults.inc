@@ -6,59 +6,36 @@
  * Implement default rules.
  */
 
- /**
+/**
  * Implementation of hook_rules_defaults().
  */
 function ec_quickpay_rules_defaults() {
-  $config = array (
+  $config = array(
     'rules' => 
-    array (
+    array(
       'rules_1' => 
-      array (
+      array(
         '#type' => 'rule',
-        '#set' => 'event_ec_store_event_transactions_bef_save',
-        '#label' => 'Authorised QuickPay orders now in picking',
-        '#active' => 1,
-        '#weight' => '0',
+        '#set' => 'event_ec_store_event_transactions_save',
+        '#label' => 'Capture payments on QuickPay transactions.',
+        '#active' => 0,
+        '#weight' => '10',
+        '#categories' => 
+        array(
+          0 => 'ec_quickpay',
+        ),
         '#status' => 'custom',
         '#conditions' => 
-        array (
+        array(
           0 => 
-          array (
-            '#type' => 'condition',
-            '#settings' => 
-            array (
-              '#argument map' => 
-              array (
-                'txn' => 'txn',
-              ),
-            ),
-            '#name' => 'ec_store_condition_is_shippable',
+          array(
             '#info' => 
-            array (
-              'label' => 'Transaction is shippable',
-              'arguments' => 
-              array (
-                'txn' => 
-                array (
-                  'type' => 'transaction',
-                  'label' => 'Transaction',
-                ),
-              ),
-              'module' => 'Transaction',
-            ),
-            '#weight' => 0,
-          ),
-          1 => 
-          array (
-            '#weight' => 0,
-            '#info' => 
-            array (
+            array(
               'label' => 'Transaction workflow status',
               'arguments' => 
-              array (
+              array(
                 'txn' => 
-                array (
+                array(
                   'type' => 'transaction',
                   'label' => 'Transaction',
                 ),
@@ -67,36 +44,37 @@ function ec_quickpay_rules_defaults() {
             ),
             '#name' => 'ec_store_condition_workflow_status',
             '#settings' => 
-            array (
+            array(
               'workflow' => 
-              array (
-                1 => '1',
+              array(
+                11 => '11',
               ),
               '#argument map' => 
-              array (
+              array(
                 'txn' => 'txn',
               ),
             ),
             '#type' => 'condition',
+            '#weight' => 0,
           ),
-          2 => 
-          array (
+          1 => 
+          array(
             '#type' => 'condition',
             '#settings' => 
-            array (
+            array(
               '#argument map' => 
-              array (
+              array(
                 'txn' => 'txn',
               ),
             ),
             '#name' => 'ec_quickpay_condition_received',
             '#info' => 
-            array (
-              'label' => 'Only QuickPay authorised payments remain',
+            array(
+              'label' => 'Only QuickPay authorised payments remain pending',
               'arguments' => 
-              array (
+              array(
                 'txn' => 
-                array (
+                array(
                   'type' => 'transaction',
                   'label' => 'Transaction',
                 ),
@@ -107,43 +85,42 @@ function ec_quickpay_rules_defaults() {
           ),
         ),
         '#actions' => 
-        array (
+        array(
           0 => 
-          array (
+          array(
             '#weight' => 0,
-            '#type' => 'action',
+            '#info' => 
+            array(
+              'module' => 'e-Commerce',
+              'arguments' => 
+              array(
+                'transaction' => 
+                array(
+                  'label' => 'Transaction',
+                  'type' => 'transaction',
+                ),
+              ),
+              'label' => 'Capture QuickPay payments on transaction',
+              'base' => 'rules_core_action_execute',
+              'action_name' => 'ec_quickpay_action_transaction_capture',
+              'configurable' => FALSE,
+            ),
+            '#name' => 'rules_core_ec_quickpay_action_transaction_capture',
             '#settings' => 
-            array (
-              'workflow' => '10',
+            array(
+              'auto_save' => 1,
               '#argument map' => 
-              array (
+              array(
                 'transaction' => 'txn',
               ),
             ),
-            '#name' => 'ec_store_rules_action_set_workflow',
-            '#info' => 
-            array (
-              'label' => 'Set transaction workflow',
-              'arguments' => 
-              array (
-                'transaction' => 
-                array (
-                  'type' => 'transaction',
-                  'label' => 'Transaction',
-                ),
-              ),
-              'module' => 'Transaction',
-            ),
+            '#type' => 'action',
           ),
         ),
         '#version' => 6003,
-        '#categories' => 
-        array (
-          0 => 'ec_quickpay',
-        ),
       ),
       'rules_2' => 
-      array (
+      array(
         '#type' => 'rule',
         '#set' => 'event_ec_store_event_transactions_bef_save',
         '#label' => 'Set non-shippable QuickPay transaction as awaiting capture',
@@ -151,130 +128,135 @@ function ec_quickpay_rules_defaults() {
         '#weight' => '0',
         '#status' => 'custom',
         '#conditions' => 
-        array (
+        array(
           0 => 
-          array (
-            '#settings' => 
-            array (
-              '#argument map' => 
-              array (
-                'txn' => 'txn',
-              ),
-            ),
-            '#type' => 'condition',
-            '#name' => 'ec_store_condition_is_shippable',
-            '#info' => 
-            array (
-              'label' => 'Transaction is shippable',
-              'arguments' => 
-              array (
-                'txn' => 
-                array (
-                  'type' => 'transaction',
-                  'label' => 'Transaction',
-                ),
-              ),
-              'module' => 'Transaction',
-            ),
+          array(
             '#weight' => -1,
             '#negate' => 1,
-          ),
-          3 => 
-          array (
-            '#weight' => 0,
-            '#type' => 'condition',
-            '#settings' => 
-            array (
-              'workflow' => 
-              array (
-                1 => '1',
-                2 => '2',
-              ),
-              '#argument map' => 
-              array (
-                'txn' => 'txn',
-              ),
-            ),
-            '#name' => 'ec_store_condition_workflow_status',
             '#info' => 
-            array (
-              'label' => 'Transaction workflow status',
+            array(
+              'label' => 'Transaction is shippable',
               'arguments' => 
-              array (
+              array(
                 'txn' => 
-                array (
+                array(
                   'type' => 'transaction',
                   'label' => 'Transaction',
                 ),
               ),
               'module' => 'Transaction',
             ),
+            '#name' => 'ec_store_condition_is_shippable',
+            '#type' => 'condition',
+            '#settings' => 
+            array(
+              '#argument map' => 
+              array(
+                'txn' => 'txn',
+              ),
+            ),
+          ),
+          3 => 
+          array(
+            '#weight' => 0,
+            0 => 
+            array(
+              '#weight' => 0,
+              '#info' => 
+              array(
+                'label' => 'Transaction workflow status',
+                'arguments' => 
+                array(
+                  'txn' => 
+                  array(
+                    'type' => 'transaction',
+                    'label' => 'Transaction',
+                  ),
+                ),
+                'module' => 'Transaction',
+              ),
+              '#name' => 'ec_store_condition_workflow_status',
+              '#settings' => 
+              array(
+                'workflow' => 
+                array(
+                  1 => '1',
+                  2 => '2',
+                ),
+                '#argument map' => 
+                array(
+                  'txn' => 'txn',
+                ),
+              ),
+              '#type' => 'condition',
+            ),
+            '#type' => 'OR',
           ),
           4 => 
-          array (
-            '#weight' => 0,
+          array(
+            '#type' => 'condition',
+            '#settings' => 
+            array(
+              '#argument map' => 
+              array(
+                'txn' => 'txn',
+              ),
+            ),
+            '#name' => 'ec_quickpay_condition_received',
             '#info' => 
-            array (
+            array(
               'label' => 'Only QuickPay authorised payments remain pending',
               'arguments' => 
-              array (
+              array(
                 'txn' => 
-                array (
+                array(
                   'type' => 'transaction',
                   'label' => 'Transaction',
                 ),
               ),
               'module' => 'QuickPay',
             ),
-            '#name' => 'ec_quickpay_condition_received',
-            '#settings' => 
-            array (
-              '#argument map' => 
-              array (
-                'txn' => 'txn',
-              ),
-            ),
-            '#type' => 'condition',
+            '#weight' => 0,
           ),
         ),
         '#actions' => 
-        array (
+        array(
           1 => 
-          array (
-            '#weight' => 0,
-            '#type' => 'action',
-            '#settings' => 
-            array (
-              'workflow' => '11',
-              '#argument map' => 
-              array (
-                'transaction' => 'txn',
-              ),
-            ),
-            '#name' => 'ec_store_rules_action_set_workflow',
+          array(
             '#info' => 
-            array (
+            array(
               'label' => 'Set transaction workflow',
               'arguments' => 
-              array (
+              array(
                 'transaction' => 
-                array (
+                array(
                   'type' => 'transaction',
                   'label' => 'Transaction',
                 ),
               ),
               'module' => 'Transaction',
             ),
+            '#name' => 'ec_store_rules_action_set_workflow',
+            '#settings' => 
+            array(
+              'workflow' => '11',
+              '#argument map' => 
+              array(
+                'transaction' => 'txn',
+              ),
+            ),
+            '#type' => 'action',
+            '#weight' => 0,
           ),
         ),
         '#version' => 6003,
         '#categories' => 
-        array (
+        array(
           0 => 'ec_quickpay',
         ),
       ),
       'rules_4' => 
-      array (
+      array(
         '#type' => 'rule',
         '#set' => 'event_ec_store_event_transactions_bef_save',
         '#label' => 'Mark shipped QuickPay orders as awaiting capture',
@@ -282,23 +264,23 @@ function ec_quickpay_rules_defaults() {
         '#weight' => '1',
         '#status' => 'custom',
         '#conditions' => 
-        array (
+        array(
           0 => 
-          array (
+          array(
             '#type' => 'condition',
             '#name' => 'ec_store_condition_workflow_status_changed',
             '#info' => 
-            array (
+            array(
               'label' => 'Transaction workflow status changed',
               'arguments' => 
-              array (
+              array(
                 'txn' => 
-                array (
+                array(
                   'type' => 'transaction',
                   'label' => 'Transaction',
                 ),
                 'orig_txn' => 
-                array (
+                array(
                   'type' => 'transaction',
                   'label' => 'Transaction',
                 ),
@@ -308,15 +290,15 @@ function ec_quickpay_rules_defaults() {
             '#weight' => 0,
           ),
           1 => 
-          array (
+          array(
             '#weight' => 0,
             '#info' => 
-            array (
+            array(
               'label' => 'Transaction workflow status',
               'arguments' => 
-              array (
+              array(
                 'txn' => 
-                array (
+                array(
                   'type' => 'transaction',
                   'label' => 'Transaction',
                 ),
@@ -325,24 +307,24 @@ function ec_quickpay_rules_defaults() {
             ),
             '#name' => 'ec_store_condition_workflow_status',
             '#settings' => 
-            array (
+            array(
               'workflow' => 
-              array (
+              array(
                 3 => '3',
               ),
             ),
             '#type' => 'condition',
           ),
           3 => 
-          array (
+          array(
             '#weight' => 0,
             '#info' => 
-            array (
+            array(
               'label' => 'Only QuickPay authorised payments remain pending',
               'arguments' => 
-              array (
+              array(
                 'txn' => 
-                array (
+                array(
                   'type' => 'transaction',
                   'label' => 'Transaction',
                 ),
@@ -351,9 +333,9 @@ function ec_quickpay_rules_defaults() {
             ),
             '#name' => 'ec_quickpay_condition_received',
             '#settings' => 
-            array (
+            array(
               '#argument map' => 
-              array (
+              array(
                 'txn' => 'txn',
               ),
             ),
@@ -361,26 +343,26 @@ function ec_quickpay_rules_defaults() {
           ),
         ),
         '#actions' => 
-        array (
+        array(
           0 => 
-          array (
+          array(
             '#type' => 'action',
             '#settings' => 
-            array (
+            array(
               'workflow' => '11',
               '#argument map' => 
-              array (
+              array(
                 'transaction' => 'txn',
               ),
             ),
             '#name' => 'ec_store_rules_action_set_workflow',
             '#info' => 
-            array (
+            array(
               'label' => 'Set transaction workflow',
               'arguments' => 
-              array (
+              array(
                 'transaction' => 
-                array (
+                array(
                   'type' => 'transaction',
                   'label' => 'Transaction',
                 ),
@@ -392,34 +374,34 @@ function ec_quickpay_rules_defaults() {
         ),
         '#version' => 6003,
         '#categories' => 
-        array (
+        array(
           0 => 'ec_quickpay',
         ),
       ),
       'rules_5' => 
-      array (
+      array(
         '#type' => 'rule',
         '#set' => 'event_ec_store_event_transactions_bef_save',
         '#label' => 'Mark captured QuickPay orders as completed',
         '#active' => 1,
         '#weight' => '0',
         '#categories' => 
-        array (
+        array(
           0 => 'ec_quickpay',
         ),
         '#status' => 'custom',
         '#conditions' => 
-        array (
+        array(
           0 => 
-          array (
+          array(
             '#weight' => -10,
             '#info' => 
-            array (
+            array(
               'label' => 'Transaction workflow status',
               'arguments' => 
-              array (
+              array(
                 'txn' => 
-                array (
+                array(
                   'type' => 'transaction',
                   'label' => 'Transaction',
                 ),
@@ -428,40 +410,40 @@ function ec_quickpay_rules_defaults() {
             ),
             '#name' => 'ec_store_condition_workflow_status',
             '#settings' => 
-            array (
+            array(
               'workflow' => 
-              array (
+              array(
                 11 => '11',
               ),
               '#argument map' => 
-              array (
+              array(
                 'txn' => 'orig_txn',
               ),
             ),
             '#type' => 'condition',
           ),
           2 => 
-          array (
+          array(
             '#type' => 'condition',
             '#settings' => 
-            array (
+            array(
               'allocation' => 
-              array (
+              array(
                 2 => '2',
               ),
               '#argument map' => 
-              array (
+              array(
                 'txn' => 'txn',
               ),
             ),
             '#name' => 'ec_store_condition_allocation_status',
             '#info' => 
-            array (
+            array(
               'label' => 'Transaction allocation status',
               'arguments' => 
-              array (
+              array(
                 'txn' => 
-                array (
+                array(
                   'type' => 'transaction',
                   'label' => 'Transaction',
                 ),
@@ -472,16 +454,16 @@ function ec_quickpay_rules_defaults() {
           ),
         ),
         '#actions' => 
-        array (
+        array(
           0 => 
-          array (
+          array(
             '#info' => 
-            array (
+            array(
               'label' => 'Set transaction workflow',
               'arguments' => 
-              array (
+              array(
                 'transaction' => 
-                array (
+                array(
                   'type' => 'transaction',
                   'label' => 'Transaction',
                 ),
@@ -490,10 +472,10 @@ function ec_quickpay_rules_defaults() {
             ),
             '#name' => 'ec_store_rules_action_set_workflow',
             '#settings' => 
-            array (
+            array(
               'workflow' => '6',
               '#argument map' => 
-              array (
+              array(
                 'transaction' => 'txn',
               ),
             ),
@@ -505,6 +487,5 @@ function ec_quickpay_rules_defaults() {
       ),
     ),
   );
-
   return $config;
   }

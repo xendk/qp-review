@@ -37,15 +37,14 @@ Using quickpay.module in a custom Drupal solution
 The core module can be used as a payment gateway in a custom written
 (ie. not using ECommerce or Ubercart) Drupal solution. What is needed
 is basically to present the quickpay_settings_form somewhere (using
-system_settings_form), and then use the, as yet undocumented API. Take
-a look at ec_quickpay and uc_quickpay for example code.
+system_settings_form), and then use the, mostly undocumented,
+API. Take a look at ec_quickpay and uc_quickpay for example code.
 
 IMPLEMENTATION
 ==============
 
 The core module provides a block to show the accepted credit cards, as
-required by PBS. Note that it doesn't enforce payments to only use
-those cards.
+required by PBS. 
 
 Remember that PBS requires that the customer gets an confirmation of
 the order either by email or as a web page. To implement this as a web
@@ -57,7 +56,6 @@ page to display an appropriate confirmation page.
 
 AS YET UNSUPPORTED FEATURES
 ====================
-* Autocapture
 * Subscriptions, for both ECommerce and Ubercard (supported by core API)
 
 AUTHOR / MAINTAINER
