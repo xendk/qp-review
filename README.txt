@@ -48,11 +48,10 @@ required by PBS.
 
 Remember that PBS requires that the customer gets an confirmation of
 the order either by email or as a web page. To implement this as a web
-page, ec_quickpay has configuration options to set the page that
-customers will be redirected to on success, while Ubercart has its own
-setting. As a convenience the modules sets $_SESSION['last_order'] to
-the id of the last successful order in this session, which allows the
-page to display an appropriate confirmation page.
+page, use E-Commerce or Ubercarts settings to set a custom return
+page. As a convenience the modules sets $_SESSION['last_order'] to the
+id of the last successful order in this session, which allows the page
+to display an appropriate confirmation page.
 
 AS YET UNSUPPORTED FEATURES
 ====================
@@ -60,5 +59,5 @@ AS YET UNSUPPORTED FEATURES
 
 AUTHOR / MAINTAINER
 ===================
-Thomas Fini Hansen (aka Xen.dk on Drupal.org)
+Thomas Fini Hansen (aka Xen on Drupal.org)
 xen at xen dot dk
