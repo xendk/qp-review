@@ -628,8 +628,7 @@ function quickpay_from_callback() {
  * @return
  *   result from _quickpay_request()
  */
-function quickpay_authorize($carddata, $orderid, $amount, $currency = NULL,
-                            $autocapture = FALSE) {
+function quickpay_authorize($carddata, $orderid, $amount, $currency, $autocapture = FALSE) {
   $request_data = _quickpay_carddata($carddata);
   list($request_data['amount'], $request_data['currency']) =
        _quickpay_validate_amount($amount, $currency);
@@ -682,7 +681,7 @@ function quickpay_authorize($carddata, $orderid, $amount, $currency = NULL,
  * @return
  *   result from _quickpay_request()
  */
-function quickpay_recurring($txn, $orderid, $amount, $currency = NULL, $autocapture = FALSE) {
+function quickpay_recurring($txn, $orderid, $amount, $currency, $autocapture = FALSE) {
   $request_data = array('transaction' => $txn['transaction']);
   list($request_data['amount'], $request_data['currency']) =
        _quickpay_validate_amount($amount, $currency);
