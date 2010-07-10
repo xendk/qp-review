@@ -134,6 +134,13 @@ function quickpay_settings_form() {
     '#default_value' => variable_get('quickpay_test_mode', FALSE),
   );
 
+  $form['quickpay_debug'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Debug log'),
+    '#description' => t('Log all request and responses to QuickPay in watchdog.'),
+    '#default_value' => variable_get('quickpay_debug', FALSE),
+  );
+
   $form['hosted'] = array(
     '#type' => 'fieldset',
     '#title' => t('Payment window options'),
@@ -300,6 +307,10 @@ function quickpay_callback($id) {
     return;
   }
 
+  if (variable_get('quickpay_debug', FALSE)) {
+    watchdog('quickpay', 'Callback parameters: @id, @params', array('@id' => $id, '@params' => print_r($transaction, TRUE)), WATCHDOG_DEBUG);
+  }
+
   // Let the first module that returns !NULL handle it.
   foreach (module_implements('quickpay_callback') as $module) {
     if (module_invoke($module, 'quickpay_callback', $id, $transaction, $args)
@@ -365,11 +376,19 @@ self.close();
  *   Callback for QuickPay.
  * @param $autocapture
  *   Whether to attempt to capture payment immediately.
+ * @param $msg_type
+ *   The type of request, 'authorize' or 'subscribe'.
+ * @param $description
+ *   Description of the order. Required for subscriptions.
  * @returns
  *   A form fragment that will open the payment window.
+ *
+ * @todo The arguments of this has grown out of hand. The API needs
+ * rethinking and simplification.
  */
 function quickpay_hosted_form($amount, $currency, $order_id, $form_id, $continue_url,
-                              $cancel_url, $callback_url, $autocapture = FALSE) {
+                              $cancel_url, $callback_url, $autocapture = FALSE,
+                              $msg_type = 'authorize', $description = NULL) {
   $md5_order = array(
     'protocol',
     'msgtype',
@@ -388,9 +407,30 @@ function quickpay_hosted_form($amount, $currency, $order_id, $form_id, $continue
     'testmode',
   );
 
+  if (!in_array($msg_type, array('authorize', 'subscribe'))) {
+    // FIXME: better error handling.
+    drupal_set_message(t("Bad message type @type, must be 'authorize' or 'subscribe'.", array('@type' => $msg_type)),
+                       'error');
+    drupal_not_found();
+    return;
+  }
+
+  if ($msg_type == 'subscribe') {
+    if (empty($description)) {
+      drupal_set_message(t("Missing required subscription description."), 'error');
+      drupal_not_found();
+      return;
+    }
+    if ($autocapture) {
+      drupal_set_message(t("Autocapture not possible for subscriptions."), 'error');
+      drupal_not_found();
+      return;
+    }
+  }
+
   // Required variables.
   $data['protocol'] = QUICKPAY_VERSION;
-  $data['msgtype'] = "authorize"; // TODO: support subscribe.
+  $data['msgtype'] = $msg_type;
   $data['merchant'] = variable_get('quickpay_merchant', '');
   // FIXME: work together with i18n/locale
   $data['language'] = variable_get('quickpay_hosted_language', 'en');
@@ -418,6 +458,8 @@ function quickpay_hosted_form($amount, $currency, $order_id, $form_id, $continue
 
   $data['autocapture'] = ($autocapture) ? '1' : '0';
 
+  $data['description'] = $description;
+  
   if (variable_get('quickpay_test_mode', FALSE)) {
     $data['testmode'] = '1';
     $data['ordernumber'] .= "T";
@@ -431,7 +473,6 @@ function quickpay_hosted_form($amount, $currency, $order_id, $form_id, $continue
   $data['cardtypelock'] = join(',', array_keys($cards));
   
   // Other possible variables:
-  // $data['description'];
   // $data['CUSTOM_*'];
 
   $md5_string = "";
@@ -837,6 +878,11 @@ function _quickpay_request($msg_type, $request_data) {
   }
   $md5fields['secret'] = $secret;
   $message['md5check'] = md5(implode('', $md5fields));
+
+  if (variable_get('quickpay_debug', FALSE)) {
+    watchdog('quickpay', 'Request parameters: @params', array('@params' => print_r($message, TRUE)), WATCHDOG_DEBUG);
+  }
+  
   if (!_quickpay_validate($message)) {
     _quickpay_error(t('Request message didn\'t pass validation.'));
     return FALSE;
@@ -846,6 +892,11 @@ function _quickpay_request($msg_type, $request_data) {
                                         'application/x-www-form-urlencoded'),
                                   'POST',
                                   http_build_query($message, FALSE, '&'), 0);
+
+  if (variable_get('quickpay_debug', FALSE)) {
+    watchdog('quickpay', 'Request response: @response', array('@response' => print_r($response, TRUE)), WATCHDOG_DEBUG);
+  }
+
   if ($response->code != 200 or empty($response->data)) {
     _quickpay_error(t('Server returned non-success code or empty result'));
     return FALSE;

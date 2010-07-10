@@ -45,7 +45,6 @@ function uc_quickpay_init() {
  */
 function uc_quickpay_form_alter(&$form, &$form_state, $form_id) {
   // FIXME: Possibly split out into uc_quickpay_<form_id>_form_alter
-  global $_uc_quickpay_carddata;
   if ($form_id == 'uc_cart_checkout_review_form' &&
       ($order_id = intval($_SESSION['cart_order'])) > 0) {
     $order = uc_order_load($order_id);
@@ -192,6 +191,69 @@ function uc_quickpay_payment_method() {
   return $methods;
 }
 
+/*******************************************************************************
+ * Hook Functions (uc_recurring)
+ ******************************************************************************/
+
+/**
+ * Implementation hook_recurring_info().
+ */
+function uc_quickpay_recurring_info() {
+  $items = array();
+  $items['quickpay'] = array(
+    'name' => t('QuickPay'),
+    'payment method' => 'uc_quickpay',
+    'module' => 'uc_quickpay',
+    'fee handler' => 'quickpay',
+    'renew callback' => 'uc_quickpay_gateway_renew',
+    'process callback' => 'uc_quickpay_gateway_process',
+    'cancel callback' => 'uc_quickpay_gateway_cancel',
+    'own handler' => FALSE,
+    'menu' => array(
+      'charge' => UC_RECURRING_MENU_DEFAULT,
+      'edit' => UC_RECURRING_MENU_DEFAULT,
+      'cancel' => UC_RECURRING_MENU_DEFAULT,
+    ), // Use the default user operation defined in uc_recurring.
+  );
+  return $items;
+}
+
+function uc_quickpay_gateway_process($order, &$fee) {
+  // We don't need a process callback, as the subscription is set up by the payment.
+  // But do some sanity checks.
+  $payment = _uc_quickpay_get_last_subscription($order->order_id);
+  if (!$payment) {
+    return FALSE;
+  }
+  return TRUE;
+}
+
+function uc_quickpay_gateway_renew($order, &$fee) {
+  $payment = _uc_quickpay_get_last_subscription($fee->order_id);
+  if (!$payment) {
+    return FALSE;
+  }
+  
+  $autocapture = FALSE;
+  if (variable_get('uc_autocapture', FALSE)) {
+    $autocapture = !uc_order_is_shippable($order);
+  }
+
+  $transaction = quickpay_recurring(array('transaction' => $payment->qp_subscription), $order->order_id, $fee->fee_amount, variable_get('uc_currency_code', ''), $autocapture);
+  if (_uc_quickpay_handle_transaction($order, $transaction)) {
+    return TRUE;
+  }
+  return FALSE;
+}
+
+function uc_quickpay_gateway_cancel($fee) {
+  // We don't need a process callback, as the subscription is set up by the payment.
+  // But do some sanity checks.
+  $payment = _uc_quickpay_get_last_subscription($fee->order_id);
+  if ($payment) {
+    quickpay_cancel(array('transaction' => $payment->qp_subscription));
+  }
+}
 
 /*******************************************************************************
  * Callback Functions, Forms, and Tables
@@ -212,7 +274,6 @@ function theme_uc_quickpay_by_order_form($form) {
  * Callback for quickpay payment method settings.
  */
 function uc_payment_method_quickpay($op, &$arg1) {
-  global $_uc_quickpay_carddata;
   switch ($op) {
     case 'cart-review':
       // Doing nothing, form_alter is handling this.
@@ -233,26 +294,33 @@ function uc_payment_method_quickpay($op, &$arg1) {
 
 // Form to build the submission to quickpay.dk
 function uc_quickpay_form(&$form_state, $order) {
-  if (variable_get('uc_autocapture', FALSE)) {
-    // Autocapture is only enabled for orders where no products are shippable
-    $autocapture = TRUE;
-    foreach ($order->products as $product) {
-      if ($product->shippable) {
-        $autocapture = FALSE;
-        break;
-      }
+  $msg_type = 'authorize';
+  $description = NULL;
+  if (module_exists('uc_recurring')) {
+    // Support subscriptions.
+    $recurring_fees = uc_recurring_get_recurring_products_in_order($order);
+    if (count($recurring_fees) > 0) {
+      $msg_type = 'subscribe';
+      $description = "Order " . $order->order_id;
     }
   }
+
+  $autocapture = FALSE;
+  if ($msg_type == 'authorize' and variable_get('uc_autocapture', FALSE)) {
+    // Autocapture is only enabled for orders where no products are shippable
+    $autocapture = !uc_order_is_shippable($order);    
+  }
+
   $form = quickpay_hosted_form($order->order_total,
-                               variable_get('uc_currency_code', ''),
-                               $order->order_id,
-                               'uc-quickpay-form',
-                               url('cart/quickpay/complete/' .
-                                   uc_cart_get_id(), array('absolute' => TRUE)),
-                               url('cart/checkout/review', array('absolute' => TRUE)),
-                               url('quickpay/' .
-                                   $order->order_id, array( 'absolute' => TRUE)),
-                               $autocapture);
+          variable_get('uc_currency_code', ''),
+          $order->order_id,
+          'uc-quickpay-form',
+          url('cart/quickpay/complete/' .
+            uc_cart_get_id(), array('absolute' => TRUE)),
+          url('cart/checkout/review', array('absolute' => TRUE)),
+          url('quickpay/' .
+            $order->order_id, array( 'absolute' => TRUE)),
+          $autocapture, $msg_type, $description);
   return $form;
 }
 
@@ -261,8 +329,7 @@ function uc_quickpay_complete($cart_id = 0) {
 
   if ($order === FALSE || !in_array(uc_order_status_data($order->order_status, 'state'), array('in_checkout',
                                                                                               'post_checkout'))) {
-    print t('An error has occurred during payment.  Please contact us to ensure your order has submitted.');
-    exit();
+    return t('An error has occurred during payment.  Please contact us to ensure your order has submitted.');
   }
 
   $_SESSION['last_order'] = $order->order_id;
@@ -351,35 +418,76 @@ function _uc_quickpay_handle_transaction($order, $transaction) {
   switch (quickpay_result($transaction)) {
   case 'success': // Accepted
     $states = _quickpay_state_codes();
-    // If autocapture, transaction state is 'Captured' -- log payment
-    if ($states[$transaction['state']] == "Captured") {
-      uc_payment_enter($order->order_id,
-        'quickpay', $transaction['amount'], 0,
-        array('qp_transaction' => $transaction['transaction']),
-        'Quickpay transaction ID: ' . $transaction['transaction']);
-      watchdog('quickpay',
-        'Payment captured for order %order.',
-        array('%order' => $order->order_id), WATCHDOG_NOTICE,
-        'admin/store/orders/' . $order->order_id);
+    switch ($states[$transaction['state']]) {
+      case 'Captured':
+        // If autocapture, transaction state is 'Captured' -- log payment
+        uc_payment_enter($order->order_id,
+          'quickpay', $transaction['amount'], 0,
+          array('qp_transaction' => $transaction['transaction']),
+          'Quickpay transaction ID: ' . $transaction['transaction']);
+        watchdog('quickpay',
+          'Payment captured for order %order.',
+          array('%order' => $order->order_id), WATCHDOG_NOTICE,
+          'admin/store/orders/' . $order->order_id);
+        return TRUE;
+        break;
+      case 'Authorized':
+        // Save for later capture
+        uc_order_comment_save($order->order_id, 0,
+          t('Payment authorized for !amount.',
+            array('!amount' => $transaction['amount'])),
+          'admin');
+        // Log a 0 amount payment, used to get the transaction id later.
+        uc_payment_enter($order->order_id,
+          'quickpay', 0, 0,
+          array('qp_transaction' => $transaction['transaction']),
+          'Authorized for ' . $transaction['amount'] .
+          '. Transaction ID: '. $transaction['transaction']);
+        watchdog('quickpay',
+          'Payment authorized for order %order.',
+          array('%order' => $order->order_id), WATCHDOG_NOTICE,
+          'admin/store/orders/' . $order->order_id);
+        return TRUE;
+        break;
+      case 'Subscribed':
+        // Save for later
+        uc_order_comment_save($order->order_id, 0,
+          t('Subscription authorized.'), 'admin');
+        // Log a 0 amount payment, used to get the transaction id later.
+        uc_payment_enter($order->order_id,
+          'quickpay', 0, 0,
+          array('qp_subscription' => $transaction['transaction']),
+          'Subscription created. Transaction ID: '. $transaction['transaction']);
+        watchdog('quickpay',
+          'Subscription authorized for order %order.',
+          array('%order' => $order->order_id), WATCHDOG_NOTICE,
+          'admin/store/orders/' . $order->order_id);
+        return TRUE;            
+        break;
+      case 'Cancelled':
+      case 'Refunded':
+        // These shouldn't show up here, but for safety's sake.
+        uc_order_comment_save($order->order_id, 0,
+          t("Unexpected '@type' callback.", array('@type' => $transaction['state'])), 'admin');
+        watchdog('quickpay',
+          "Unexpected '@type' callback for order %order.",
+          array('%order' => $order->order_id, '@type' => $transaction['state']), WATCHDOG_NOTICE,
+          'admin/store/orders/' . $order->order_id);
+        return TRUE;
+      default:
+        watchdog('quickpay',
+          'Unknown state %state for order %order, transaction ignored.',
+          array('%state' => $transaction['state'],
+            '%order' => $order->order_id,
+            '%message' => $transaction['qpstatmsg']),
+          WATCHDOG_ERROR, 'admin/store/orders/' . $order->order_id);
+        uc_order_comment_save($order->order_id, 0,
+          t('Payment failed with unknown transaction msgtype %msgtype message: %message.',
+            array('%msgtype' => $transaction['msgtype'],
+              '%message' => $transaction['qpstatmsg'])),
+          'admin');
+        return NULL;
     }
-    else {
-      // Otherwise, save for later capture
-      uc_order_comment_save($order->order_id, 0,
-                            t('Payment authorized for !amount.',
-                              array('!amount' => $transaction['amount'])),
-                            'admin');
-      // Log a 0 amount payment, used to get the transaction id later.
-      uc_payment_enter($order->order_id,
-                       'quickpay', 0, 0,
-                       array('qp_transaction' => $transaction['transaction']),
-                       'Authorized for ' . $transaction['amount'] .
-                       '. Transaction ID: '. $transaction['transaction']);
-      watchdog('quickpay',
-               'Payment authorized for order %order.',
-               array('%order' => $order->order_id), WATCHDOG_NOTICE,
-               'admin/store/orders/' . $order->order_id);
-        }
-    return TRUE;
     break;
   case 'failed': // Failed
     // Handled as denied.
@@ -433,6 +541,20 @@ function _uc_quickpay_get_last_transaction($order_id) {
   for ($i = sizeof($payments)-1; $i >= 0; $i--) {
     $payment = drupal_unpack($payments[$i]);
     if ($payment->qp_transaction) {
+      return $payment;
+    }
+  }
+  return FALSE;
+}
+
+function _uc_quickpay_get_last_subscription($order_id) {
+  $payments = uc_payment_load_payments($order_id);
+  if (!$payments)
+    return FALSE;
+  // Loop backwards, in order to get the last.
+  for ($i = sizeof($payments)-1; $i >= 0; $i--) {
+    $payment = drupal_unpack($payments[$i]);
+    if ($payment->qp_subscription) {
       return $payment;
     }
   }
