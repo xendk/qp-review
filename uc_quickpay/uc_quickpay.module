@@ -423,7 +423,10 @@ function _uc_quickpay_handle_transaction($order, $transaction) {
         // If autocapture, transaction state is 'Captured' -- log payment
         uc_payment_enter($order->order_id,
           'quickpay', $transaction['amount'], 0,
-          array('qp_transaction' => $transaction['transaction']),
+          array(
+            'qp_transaction' => $transaction['transaction'],
+            'qp_cardtype' => $transaction['cardtype'],
+          ),
           'Quickpay transaction ID: ' . $transaction['transaction']);
         watchdog('quickpay',
           'Payment captured for order %order.',
@@ -440,7 +443,10 @@ function _uc_quickpay_handle_transaction($order, $transaction) {
         // Log a 0 amount payment, used to get the transaction id later.
         uc_payment_enter($order->order_id,
           'quickpay', 0, 0,
-          array('qp_transaction' => $transaction['transaction']),
+          array(
+            'qp_transaction' => $transaction['transaction'],
+            'qp_cardtype' => $transaction['cardtype'],
+          ),
           'Authorized for ' . $transaction['amount'] .
           '. Transaction ID: '. $transaction['transaction']);
         watchdog('quickpay',
@@ -456,7 +462,10 @@ function _uc_quickpay_handle_transaction($order, $transaction) {
         // Log a 0 amount payment, used to get the transaction id later.
         uc_payment_enter($order->order_id,
           'quickpay', 0, 0,
-          array('qp_subscription' => $transaction['transaction']),
+          array(
+            'qp_subscription' => $transaction['transaction'],
+            'qp_cardtype' => $transaction['cardtype'],
+          ),
           'Subscription created. Transaction ID: '. $transaction['transaction']);
         watchdog('quickpay',
           'Subscription authorized for order %order.',
