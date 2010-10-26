@@ -132,7 +132,7 @@ function uc_quickpay_transaction_submit($form, &$form_state) {
       $amount = 0;
       $did = 'cancelled';
     }
-    
+
     if (quickpay_successful($qptxn)) {
       drupal_set_message(t("Successfully !did.", array('!did' => $did)));
       uc_payment_enter($order->order_id, 'quickpay', $amount, 0,
@@ -233,7 +233,7 @@ function uc_quickpay_gateway_renew($order, &$fee) {
   if (!$payment) {
     return FALSE;
   }
-  
+
   $autocapture = FALSE;
   if (variable_get('uc_autocapture', FALSE)) {
     $autocapture = !uc_order_is_shippable($order);
@@ -297,8 +297,14 @@ function uc_quickpay_form(&$form_state, $order) {
   $msg_type = 'authorize';
   $description = NULL;
   if (module_exists('uc_recurring')) {
-    // Support subscriptions.
-    $recurring_fees = uc_recurring_get_recurring_products_in_order($order);
+    // Support product subscriptions.
+    if (module_exists('uc_recurring_product')) {
+      $recurring_fees = uc_recurring_product_get_recurring_products_in_order($order);
+    }
+    elseif (function_exists('uc_recurring_get_recurring_products_in_order')) {
+      // Support ALPHA1. TODO: Remove when uc_recurring gets a 1.0 release.
+      $recurring_fees = uc_recurring_get_recurring_products_in_order($order);
+    }
     if (count($recurring_fees) > 0) {
       $msg_type = 'subscribe';
       $description = "Order " . $order->order_id;
@@ -308,7 +314,7 @@ function uc_quickpay_form(&$form_state, $order) {
   $autocapture = FALSE;
   if ($msg_type == 'authorize' and variable_get('uc_autocapture', FALSE)) {
     // Autocapture is only enabled for orders where no products are shippable
-    $autocapture = !uc_order_is_shippable($order);    
+    $autocapture = !uc_order_is_shippable($order);
   }
 
   $form = quickpay_hosted_form($order->order_total,
@@ -367,7 +373,7 @@ function uc_quickpay_quickpay_callback($order_id, $transaction) {
    drupal_access_denied();
    return;
   }
-  
+
   _uc_quickpay_handle_transaction($order, $transaction);
 
   if (quickpay_successful($transaction)) {
@@ -471,7 +477,7 @@ function _uc_quickpay_handle_transaction($order, $transaction) {
           'Subscription authorized for order %order.',
           array('%order' => $order->order_id), WATCHDOG_NOTICE,
           'admin/store/orders/' . $order->order_id);
-        return TRUE;            
+        return TRUE;
         break;
       case 'Cancelled':
       case 'Refunded':
