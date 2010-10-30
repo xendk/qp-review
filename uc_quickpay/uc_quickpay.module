@@ -465,8 +465,8 @@ function _uc_quickpay_handle_transaction($order, $transaction) {
       case 'Authorized':
         // Save for later capture
         uc_order_comment_save($order->order_id, 0,
-          t('Payment authorized for !amount.',
-            array('!amount' => $transaction['amount'])),
+          t('Payment authorized for !amount, using @cardtype.',
+            array('!amount' => $transaction['amount'], '@cardtype' => $transaction['cardtype'])),
           'admin');
         // Log a 0 amount payment, used to get the transaction id later.
         uc_payment_enter($order->order_id,
@@ -486,7 +486,7 @@ function _uc_quickpay_handle_transaction($order, $transaction) {
       case 'Subscribed':
         // Save for later
         uc_order_comment_save($order->order_id, 0,
-          t('Subscription authorized.'), 'admin');
+          t('Subscription authorized, using @cardtype.', array('@cardtype' => $transaction['cardtype'])), 'admin');
         // Log a 0 amount payment, used to get the transaction id later.
         uc_payment_enter($order->order_id,
           'quickpay', 0, 0,
