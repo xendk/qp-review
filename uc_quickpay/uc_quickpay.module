@@ -191,6 +191,24 @@ function uc_quickpay_payment_method() {
   return $methods;
 }
 
+/**
+ * Implementation of hook_line_item().
+ */
+function uc_quickpay_line_item() {
+  $items[] = array(
+    'id' => 'qp_fee',
+    'title' => t('Card transaction fee'),
+    'weight' => 10,
+    'default' => FALSE,
+    'stored' => TRUE,
+    'calculated' => TRUE,
+    'display_only' => FALSE,
+    'add_list' => FALSE,
+  );
+
+  return $items;
+}
+
 /*******************************************************************************
  * Hook Functions (uc_recurring)
  ******************************************************************************/
@@ -438,6 +456,10 @@ function _uc_quickpay_handle_transaction($order, $transaction) {
           'Payment captured for order %order.',
           array('%order' => $order->order_id), WATCHDOG_NOTICE,
           'admin/store/orders/' . $order->order_id);
+        // Add transaction fee to line items, if it is specified.
+        if ($transaction['fee']) {
+          uc_order_line_item_add($order->order_id, 'qt_fee', t('Card transaction fee'), $transaction['fee']);
+        }
         return TRUE;
         break;
       case 'Authorized':
