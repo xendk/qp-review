@@ -408,9 +408,10 @@ function quickpay_hosted_form($amount, $currency, $order_id, $form_id, $continue
     'cancelurl',
     'callbackurl',
     'autocapture',
+    'autofee',
     'cardtypelock',
     'description',
-    'ipaddress',
+    // 'ipaddress',
     'testmode',
   );
 
@@ -614,6 +615,7 @@ function quickpay_from_callback() {
     'transaction',
     'cardtype',
     'cardnumber',
+    'fee',
   );
 
   // Check that it validates.
@@ -649,7 +651,7 @@ function quickpay_from_callback() {
     }
   }
   // Reverse fee.
-  if ($fields['fee'] && $txn['fee'] && $txn['currency']) {
+  if (in_array('fee', $fields) && $txn['fee'] && $txn['currency']) {
     list($txn['fee'], $txn['currency']) =
       _quickpay_reverse_currency($txn['fee'], $txn['currency']);
     if (!$txn['fee']) {

@@ -458,7 +458,7 @@ function _uc_quickpay_handle_transaction($order, $transaction) {
           'admin/store/orders/' . $order->order_id);
         // Add transaction fee to line items, if it is specified.
         if ($transaction['fee']) {
-          uc_order_line_item_add($order->order_id, 'qt_fee', t('Card transaction fee'), $transaction['fee']);
+          uc_order_line_item_add($order->order_id, 'qp_fee', t('Card transaction fee'), $transaction['fee']);
         }
         return TRUE;
         break;
@@ -481,6 +481,10 @@ function _uc_quickpay_handle_transaction($order, $transaction) {
           'Payment authorized for order %order.',
           array('%order' => $order->order_id), WATCHDOG_NOTICE,
           'admin/store/orders/' . $order->order_id);
+        // Add transaction fee to line items, if it is specified.
+        if ($transaction['fee']) {
+          uc_order_line_item_add($order->order_id, 'qp_fee', t('Card transaction fee'), $transaction['fee']);
+        }
         return TRUE;
         break;
       case 'Subscribed':
