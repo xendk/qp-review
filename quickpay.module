@@ -832,8 +832,15 @@ function quickpay_status($txn) {
  * functions as a central place for currency information.
  */
 function _quickpay_currencies() {
-  static $currencies = array('DKK' => 100, 'USD' => 100, 'EUR' => 100,
-                             'GBP' => 100);
+  static $currencies = array(
+    'DKK' => 100,
+    'USD' => 100,
+    'EUR' => 100,
+    'GBP' => 100,
+    'SEK' => 100,
+    'NOK' => 100,
+    'ISK' => 100,
+  );
   return $currencies;
 }
 
