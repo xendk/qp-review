@@ -18,7 +18,7 @@ function ec_quickpay_menu() {
     'title' => 'Credit Card Payment',
     'page callback' => 'drupal_get_form',
     'page arguments' => array('ec_quickpay_form', 2),
-    'access callback' => TRUE, 
+    'access callback' => TRUE,
     'type' => MENU_CALLBACK
   );
   $items['admin/ecsettings/rtypes/quickpay/settings'] = array(
@@ -126,7 +126,7 @@ function ec_quickpay_form(&$form_state, $receipt, $invoice_no) {
   if ($total and $currency) {
     $form = quickpay_hosted_form($total, $currency,
                                  $receipt->erid,
-                                 'ec-quickpay-form', 
+                                 'ec-quickpay-form',
                                  url($return_url, array('absolute' => TRUE)),
                                  url('store/payment/quickpay/' . $receipt->erid .
                                      '/cancel', array('absolute' => TRUE)),
@@ -244,16 +244,16 @@ function ec_quickpay_receipt_save($receipt) {
 function ec_quickpay_form_ec_receipt_view_form_alter(&$form, &$form_state) {
   if ($form['receipt']['#value']->type == 'quickpay') {
       $qp_transaction = $form['receipt']['#value']->extern_id;
-      
+
       $form['quickpay']['admin'] =
         array('#type' => 'markup',
-              '#value' => l(t('Quickpay administration'), 
+              '#value' => l(t('Quickpay administration'),
                             'https://manager.quickpay.dk/',
                             array(
                               'attributes' => array(
                                 'target' => 'ec_quickpay'
                               ))));
-                                  
+
       if ($form['receipt']['#value']->status == RECEIPT_STATUS_RECEIVED) {
         // payment received.
         // capture
@@ -299,7 +299,7 @@ function ec_quickpay_transaction_submit($form, &$form_state) {
       $amount = 0;
       $did = 'cancelled';
     }
-    
+
     if (quickpay_successful($qptxn)) {
       drupal_set_message(t("Successfully !did.", array('!did' => $did)));
       $receipt->status = RECEIPT_STATUS_COMPLETED;
@@ -346,7 +346,7 @@ function ec_quickpay_quickpay_popdown($erid, $status) {
     }
     $url = url($url, array('absolute' => TRUE));
   }
-  else { 
+  else {
     // FIXME: configurable errorpage?
     $url = url('store/payment/quickpay/' . $erid . '/cancel', array('absolute' => TRUE));
   }

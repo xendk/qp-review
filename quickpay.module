@@ -127,11 +127,25 @@ function quickpay_settings_form() {
     '#attributes' => array('class' => 'quickpay-cards'),
   );
 
+  $form['quickpay_autofee'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Add transaction fee'),
+    '#description' => t('Normally the transaction fee is part of the amount paid, by activating this, the fee is added to the amount charged.'),
+    '#default_value' => variable_get('quickpay_autofee', FALSE),
+  );
+
   $form['quickpay_test_mode'] = array(
     '#type' => 'checkbox',
     '#title' => t('Test mode'),
     '#description' => t('When active, transactions will be run in test mode, even if the QuickPay account is in production mode. Order ids will get a T appended.'),
     '#default_value' => variable_get('quickpay_test_mode', FALSE),
+  );
+
+  $form['quickpay_debug'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Debug log'),
+    '#description' => t('Log all request and responses to QuickPay in watchdog.'),
+    '#default_value' => variable_get('quickpay_debug', FALSE),
   );
 
   $form['hosted'] = array(
@@ -270,7 +284,7 @@ function theme_quickpay_cards($cards) {
   $output = "<div class='quickpay-cards'>";
   $i = 1;
   foreach ($cards as $card) {
-    if ($card['image'] and !$rendered[$card['image']]) {
+    if ($card['image'] && !$rendered[$card['image']]) {
       $output .= theme('image', $card['image'], $card['name'], $card['name'],
                  array('class' => 'card-' . $i++), TRUE);
       $rendered[$card['image']] = TRUE;
@@ -298,6 +312,10 @@ function quickpay_callback($id) {
     // quickpay_from_callback already logged it.
     drupal_access_denied();
     return;
+  }
+
+  if (variable_get('quickpay_debug', FALSE)) {
+    watchdog('quickpay', 'Callback parameters: @id, @params', array('@id' => $id, '@params' => print_r($transaction, TRUE)), WATCHDOG_DEBUG);
   }
 
   // Let the first module that returns !NULL handle it.
@@ -365,11 +383,19 @@ self.close();
  *   Callback for QuickPay.
  * @param $autocapture
  *   Whether to attempt to capture payment immediately.
+ * @param $msg_type
+ *   The type of request, 'authorize' or 'subscribe'.
+ * @param $description
+ *   Description of the order. Required for subscriptions.
  * @returns
  *   A form fragment that will open the payment window.
+ *
+ * @todo The arguments of this has grown out of hand. The API needs
+ * rethinking and simplification.
  */
 function quickpay_hosted_form($amount, $currency, $order_id, $form_id, $continue_url,
-                              $cancel_url, $callback_url, $autocapture = FALSE) {
+                              $cancel_url, $callback_url, $autocapture = FALSE,
+                              $msg_type = 'authorize', $description = NULL) {
   $md5_order = array(
     'protocol',
     'msgtype',
@@ -382,15 +408,37 @@ function quickpay_hosted_form($amount, $currency, $order_id, $form_id, $continue
     'cancelurl',
     'callbackurl',
     'autocapture',
+    'autofee',
     'cardtypelock',
     'description',
-    'ipaddress',
+    // 'ipaddress',
     'testmode',
   );
 
+  if (!in_array($msg_type, array('authorize', 'subscribe'))) {
+    // FIXME: better error handling.
+    drupal_set_message(t("Bad message type @type, must be 'authorize' or 'subscribe'.", array('@type' => $msg_type)),
+                       'error');
+    drupal_not_found();
+    return;
+  }
+
+  if ($msg_type == 'subscribe') {
+    if (empty($description)) {
+      drupal_set_message(t("Missing required subscription description."), 'error');
+      drupal_not_found();
+      return;
+    }
+    if ($autocapture) {
+      drupal_set_message(t("Autocapture not possible for subscriptions."), 'error');
+      drupal_not_found();
+      return;
+    }
+  }
+
   // Required variables.
   $data['protocol'] = QUICKPAY_VERSION;
-  $data['msgtype'] = "authorize"; // TODO: support subscribe.
+  $data['msgtype'] = $msg_type;
   $data['merchant'] = variable_get('quickpay_merchant', '');
   // FIXME: work together with i18n/locale
   $data['language'] = variable_get('quickpay_hosted_language', 'en');
@@ -418,6 +466,8 @@ function quickpay_hosted_form($amount, $currency, $order_id, $form_id, $continue
 
   $data['autocapture'] = ($autocapture) ? '1' : '0';
 
+  $data['description'] = $description;
+
   if (variable_get('quickpay_test_mode', FALSE)) {
     $data['testmode'] = '1';
     $data['ordernumber'] .= "T";
@@ -426,12 +476,15 @@ function quickpay_hosted_form($amount, $currency, $order_id, $form_id, $continue
     $data['testmode'] = '0';
   }
 
+  if (variable_get('quickpay_autofee', FALSE)) {
+    $data['autofee'] = 1;
+  }
+
   $cards = quickpay_supported_cards();
   unset($cards['ikano']); // Aren't supported in cardtypelock.
   $data['cardtypelock'] = join(',', array_keys($cards));
-  
+
   // Other possible variables:
-  // $data['description'];
   // $data['CUSTOM_*'];
 
   $md5_string = "";
@@ -562,6 +615,7 @@ function quickpay_from_callback() {
     'transaction',
     'cardtype',
     'cardnumber',
+    'fee',
   );
 
   // Check that it validates.
@@ -578,19 +632,33 @@ function quickpay_from_callback() {
 
   $txn = array();
   $fields = array('amount', 'time', 'ordernumber', 'pbsstat', 'qpstat',
-                  'qpstatmsg', 'merchantemail', 'merchant', 'currency',
-                  'cardtype', 'transaction', 'cardnumber', 'state');
+            'qpstatmsg', 'merchantemail', 'merchant', 'currency',
+            'cardtype', 'transaction', 'cardnumber', 'state');
+  if (variable_get('quickpay_autofee', FALSE)) {
+    $fields[] = 'fee';
+  }
+
   foreach ($fields as $field) {
     $txn[$field] = $_POST[$field];
   }
 
   // Reverse amount
-  if ($txn['amount'] and $txn['currency']) {
+  if ($txn['amount'] && $txn['currency']) {
     list($txn['amount'], $txn['currency']) =
       _quickpay_reverse_currency($txn['amount'], $txn['currency']);
-    if (!$txn['amount'])
+    if (!$txn['amount']) {
       return NULL;
+    }
   }
+  // Reverse fee.
+  if (in_array('fee', $fields) && $txn['fee'] && $txn['currency']) {
+    list($txn['fee'], $txn['currency']) =
+      _quickpay_reverse_currency($txn['fee'], $txn['currency']);
+    if (!$txn['fee']) {
+      return NULL;
+    }
+  }
+
   return $txn;
 }
 
@@ -628,8 +696,7 @@ function quickpay_from_callback() {
  * @return
  *   result from _quickpay_request()
  */
-function quickpay_authorize($carddata, $orderid, $amount, $currency = NULL,
-                            $autocapture = FALSE) {
+function quickpay_authorize($carddata, $orderid, $amount, $currency, $autocapture = FALSE) {
   $request_data = _quickpay_carddata($carddata);
   list($request_data['amount'], $request_data['currency']) =
        _quickpay_validate_amount($amount, $currency);
@@ -637,7 +704,7 @@ function quickpay_authorize($carddata, $orderid, $amount, $currency = NULL,
   if (!$request_data['amount']) {
     return FALSE;
   }
-  
+
   $request_data['autocapture'] = $autocapture ? '1' : '0';
   $request_data['ordernumber'] = variable_get('quickpay_order_prefix', '') .
     $orderid;
@@ -682,7 +749,7 @@ function quickpay_authorize($carddata, $orderid, $amount, $currency = NULL,
  * @return
  *   result from _quickpay_request()
  */
-function quickpay_recurring($txn, $orderid, $amount, $currency = NULL, $autocapture = FALSE) {
+function quickpay_recurring($txn, $orderid, $amount, $currency, $autocapture = FALSE) {
   $request_data = array('transaction' => $txn['transaction']);
   list($request_data['amount'], $request_data['currency']) =
        _quickpay_validate_amount($amount, $currency);
@@ -765,8 +832,15 @@ function quickpay_status($txn) {
  * functions as a central place for currency information.
  */
 function _quickpay_currencies() {
-  static $currencies = array('DKK' => 100, 'USD' => 100, 'EUR' => 100,
-                             'GBP' => 100);
+  static $currencies = array(
+    'DKK' => 100,
+    'USD' => 100,
+    'EUR' => 100,
+    'GBP' => 100,
+    'SEK' => 100,
+    'NOK' => 100,
+    'ISK' => 100,
+  );
   return $currencies;
 }
 
@@ -819,7 +893,7 @@ function _quickpay_request($msg_type, $request_data) {
 
   $merchant = variable_get('quickpay_merchant', NULL);
   $secret = variable_get('quickpay_secret', NULL);
-  if (!$merchant or !$secret) {
+  if (!$merchant || !$secret) {
     if (!$merchant)
       _quickpay_error(t('Merchant number not set, transaction failed.'));
     if (!$secret)
@@ -838,6 +912,11 @@ function _quickpay_request($msg_type, $request_data) {
   }
   $md5fields['secret'] = $secret;
   $message['md5check'] = md5(implode('', $md5fields));
+
+  if (variable_get('quickpay_debug', FALSE)) {
+    watchdog('quickpay', 'Request parameters: @params', array('@params' => print_r($message, TRUE)), WATCHDOG_DEBUG);
+  }
+
   if (!_quickpay_validate($message)) {
     _quickpay_error(t('Request message didn\'t pass validation.'));
     return FALSE;
@@ -847,7 +926,12 @@ function _quickpay_request($msg_type, $request_data) {
                                         'application/x-www-form-urlencoded'),
                                   'POST',
                                   http_build_query($message, FALSE, '&'), 0);
-  if ($response->code != 200 or empty($response->data)) {
+
+  if (variable_get('quickpay_debug', FALSE)) {
+    watchdog('quickpay', 'Request response: @response', array('@response' => print_r($response, TRUE)), WATCHDOG_DEBUG);
+  }
+
+  if ($response->code != 200 || empty($response->data)) {
     _quickpay_error(t('Server returned non-success code or empty result'));
     return FALSE;
   }
@@ -949,7 +1033,7 @@ function _quickpay_response($response) {
   }
 
   // Reverse amount
-  if ($result['amount'] and $result['currency']) {
+  if ($result['amount'] && $result['currency']) {
     list($result['amount'], $result['currency']) =
       _quickpay_reverse_currency($result['amount'], $result['currency']);
     if (!$result['amount'])

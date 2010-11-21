@@ -3,13 +3,23 @@ $Id$
 IMPORTANT INFORMATION
 =====================
 
-In order to use the supplied automatic capture rule, E-Commerce
-(4.0-RC15) needs to be patched to avoid transactions being overwritten
-with previous state. The patch can be obtained at
-http://drupal.org/node/697832 .
+The payment capture is done through a scheduled ruleset, and should
+not be done in a triggered rule. 
 
-Rules that might trigger allocation of receipts (like the capture
-rule) must be triggered "After transaction saved" and not before.
+The reason is that the "Capture payments on QuickPay transactions."
+action loads and saves the transactions related to the individual
+payments, to trigger allocation of the payments.
+
+As the transaction that triggered the capture is one of those saved,
+and the rules engine saves the modified transaction after rule
+evaluation, this means that the transaction that was marked
+"completed" by the "Mark captured QuickPay orders as completed" rule,
+after capture, is overwritten by the original transaction still
+"awaiting capture".
+
+The "Capture payments on QuickPay transactions." is set to not saving
+the transaction for exactly that reason, and no other transaction
+modifying rules should be added to the scheduled ruleset.
 
 ADDITIONAL SETUP
 ================

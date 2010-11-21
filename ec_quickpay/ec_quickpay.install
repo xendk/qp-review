@@ -46,7 +46,7 @@ function ec_quickpay_disable() {
   if ($state) {
     db_query('DELETE FROM {ec_workflow_statuses} WHERE workflow = %d', $state);
   }
-  variable_del('ec_quickpay_waiting_state');  
+  variable_del('ec_quickpay_waiting_state');
 }
 
 
