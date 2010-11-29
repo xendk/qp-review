@@ -42,7 +42,9 @@ function quickpay_all_cards() {
   static $cards;
   if (!$cards) {
     $cards = array();
-    $tmp =  "dankort:dan:Dankort:dan.jpg
+    $tmp =  "creditcard::Any creditcard, overrides all other cards selected below:
+3d-creditcard::Any 3D Secure creditcard, overrides other cards selected below:
+dankort:dan:Dankort:dan.jpg
 edankort:edan:eDankort:edan.jpg
 visa:visa:Visa:visa.jpg
 visa-dk::Visa, issued in Denmark:visa.jpg
@@ -83,7 +85,35 @@ ikano:ikano:Ikano:ikano.jpg";
 }
 
 function quickpay_cards($list) {
-  return array_intersect_key(quickpay_all_cards(), array_flip($list));
+  $all_cards = quickpay_all_cards();
+  $all_cards_keys = array_keys($all_cards);
+  if (in_array('creditcard', $list)) {
+    $list = array_filter($all_cards_keys, '_quickpay_cards_filter_creditcard');
+  }
+  elseif (in_array('3d-creditcard', $list)) {
+    $list = array_filter($all_cards_keys, '_quickpay_cards_filter_3d_creditcard');
+  }
+
+  return array_intersect_key($all_cards, array_flip($list));
+}
+
+function _quickpay_cards_filter_creditcard($key) {
+  // Filter out netbanks and edankort
+  if (in_array($key, array('nordea-dk', 'danske-dk', 'edankort'))) {
+    return FALSE;
+  }
+  // Filter out 3D Secure cards.
+  elseif (_quickpay_cards_filter_3d_creditcard($key)) {
+    return FALSE;
+  }
+  return TRUE;
+}
+
+function _quickpay_cards_filter_3d_creditcard($key) {
+  if (preg_match('/^3d-/', $key)) {
+    return TRUE;
+  }
+  return FALSE;
 }
 
 function quickpay_settings_form() {
@@ -118,6 +148,7 @@ function quickpay_settings_form() {
     $options[$key] = ($card['image'] ? theme('image', $card['image']) . '&nbsp;' : '') . $card['name'];
   }
 
+  dpm(quickpay_supported_cards());
   $form['quickpay_accepted_cards'] = array(
     '#type' => 'checkboxes',
     '#title' => t('Accepted payment methods'),
@@ -265,9 +296,14 @@ function quickpay_supported_cards() {
           break;
         }
       }
+      // Or maybe not. Check if the new name exists.
+      if (!$accepted_cards[$key] and $all_cards[$old_key]) {
+        $accepted_cards[$old_key] = $all_cards[$old_key];
+      }
     }
   }
-  return $accepted_cards;
+  // Ensure that the creditcard and 3d-creditcard types get expanded.
+  return quickpay_cards(array_keys($accepted_cards));
 }
 
 function quickpay_theme() {
@@ -481,7 +517,15 @@ function quickpay_hosted_form($amount, $currency, $order_id, $form_id, $continue
   }
 
   $cards = quickpay_supported_cards();
-  unset($cards['ikano']); // Aren't supported in cardtypelock.
+  if ($cards['creditcard']) {
+    $cards = array('creditcard' => '');
+  }
+  elseif ($cards['3d-creditcard']) {
+    $cards = array('3d-creditcard' => '');
+  }
+  else {
+    unset($cards['ikano']); // Aren't supported in cardtypelock.
+  }
   $data['cardtypelock'] = join(',', array_keys($cards));
 
   // Other possible variables:
