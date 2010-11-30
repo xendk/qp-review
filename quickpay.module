@@ -148,7 +148,6 @@ function quickpay_settings_form() {
     $options[$key] = ($card['image'] ? theme('image', $card['image']) . '&nbsp;' : '') . $card['name'];
   }
 
-  dpm(quickpay_supported_cards());
   $form['quickpay_accepted_cards'] = array(
     '#type' => 'checkboxes',
     '#title' => t('Accepted payment methods'),
