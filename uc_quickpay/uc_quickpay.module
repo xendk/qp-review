@@ -441,6 +441,18 @@ function uc_quickpay_quickpay_popdown($order_id, $status) {
 function _uc_quickpay_handle_transaction($order, $transaction) {
   switch (quickpay_result($transaction)) {
   case 'success': // Accepted
+    if (empty($transaction['transaction'])) {
+      uc_order_comment_save($order->order_id, 0,
+        t('Payment failed, missing transaction id'),
+        'admin');
+      watchdog('quickpay',
+        'No transaction id for transaction, order %order: transaction: %transaction.',
+        array('%order' => $order->order_id,
+          '%transaction' => print_r($transaction, TRUE)),
+        WATCHDOG_EMERG,
+        'admin/store/orders/' . $order->order_id);
+      return NULL;
+    }
     $states = _quickpay_state_codes();
     switch ($states[$transaction['state']]) {
       case 'Captured':
