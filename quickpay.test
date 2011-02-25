@@ -6,7 +6,6 @@
  * Simple test suite for the QuickPay module. Only tests the core API.
  */
 
-// $Id$
 class QuickPayTest extends DrupalWebTestCase {
   /**
    * Implementation of get_info() for information

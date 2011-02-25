@@ -1,4 +1,3 @@
-; $Id$
 name = "Quickpay Ubercart 2"
 description   = "Process Ubercart 2 payments using QuickPay."
 dependencies[] = uc_payment
