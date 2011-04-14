@@ -18,7 +18,8 @@ function quickpay_menu() {
     'title' => 'QuickPay callback page',
     'page callback' => 'quickpay_callback',
     'page arguments' => array(1),
-    'access callback' => TRUE,
+    'access callback' => 'quickpay_md5_check',
+    'access arguments' => array('%map'),
     'type' => MENU_CALLBACK,
   );
 
@@ -32,6 +33,23 @@ function quickpay_menu() {
   );
 
   return $items;
+}
+
+/**
+ * Access callback to check that the url parameters hasn't been tampered with.
+ *
+ * @see _quickpay_md5_path()
+ */
+function quickpay_md5_check($args) {
+  $md5 = array_pop($args);
+  if (md5(implode('/', $args) . variable_get('drupal_private_key', rand())) == $md5) {
+    return TRUE;
+  }
+  else {
+    $args[] = $md5;
+    watchdog('quickpay', 'Arguments failed md5 sum check. Either someone is trying to abuse the site, or there is a bug somewhere. Path: @path', array('@path' => join('/', $args)), WATCHDOG_WARNING);
+  }
+  return FALSE;
 }
 
 /**
@@ -349,7 +367,8 @@ function quickpay_callback($id) {
   }
 
   if (variable_get('quickpay_debug', FALSE)) {
-    watchdog('quickpay', 'Callback parameters: @id, @params', array('@id' => $id, '@params' => print_r($transaction, TRUE)), WATCHDOG_DEBUG);
+    debug($message, 'Quickpay callback parameters');
+
   }
 
   // Let the first module that returns !NULL handle it.
@@ -427,9 +446,7 @@ self.close();
  * @todo The arguments of this has grown out of hand. The API needs
  * rethinking and simplification.
  */
-function quickpay_hosted_form($amount, $currency, $order_id, $form_id, $continue_url,
-                              $cancel_url, $callback_url, $autocapture = FALSE,
-                              $msg_type = 'authorize', $description = NULL) {
+function quickpay_hosted_form($amount, $currency, $order_id, $module, $options) {
   $md5_order = array(
     'protocol',
     'msgtype',
@@ -449,21 +466,41 @@ function quickpay_hosted_form($amount, $currency, $order_id, $form_id, $continue
     'testmode',
   );
 
-  if (!in_array($msg_type, array('authorize', 'subscribe'))) {
+  $options += array(
+    'autocapture' => FALSE,
+    'msgtype' => 'authorize',
+    'description' => NULL,
+    'continueurl' => NULL,
+    'cancelurl' => NULL,
+  );
+
+  if (empty($options['continueurl'])) {
+    drupal_set_message(t("Missing required continueurl."), 'error');
+    drupal_not_found();
+    return;
+  }
+
+  if (empty($options['cancelurl'])) {
+    drupal_set_message(t("Missing required cancelurl."), 'error');
+    drupal_not_found();
+    return;
+  }
+
+  if (!in_array($options['msgtype'], array('authorize', 'subscribe'))) {
     // FIXME: better error handling.
-    drupal_set_message(t("Bad message type @type, must be 'authorize' or 'subscribe'.", array('@type' => $msg_type)),
+    drupal_set_message(t("Bad message type @type, must be 'authorize' or 'subscribe'.", array('@type' => $options['msgtype'])),
                        'error');
     drupal_not_found();
     return;
   }
 
-  if ($msg_type == 'subscribe') {
-    if (empty($description)) {
+  if ($options['msgtype'] == 'subscribe') {
+    if (empty($options['description'])) {
       drupal_set_message(t("Missing required subscription description."), 'error');
       drupal_not_found();
       return;
     }
-    if ($autocapture) {
+    if ($options['autocapture']) {
       drupal_set_message(t("Autocapture not possible for subscriptions."), 'error');
       drupal_not_found();
       return;
@@ -472,7 +509,7 @@ function quickpay_hosted_form($amount, $currency, $order_id, $form_id, $continue
 
   // Required variables.
   $data['protocol'] = QUICKPAY_VERSION;
-  $data['msgtype'] = $msg_type;
+  $data['msgtype'] = $options['msgtype'];
   $data['merchant'] = variable_get('quickpay_merchant', '');
   // FIXME: work together with i18n/locale
   $data['language'] = variable_get('quickpay_hosted_language', 'en');
@@ -493,14 +530,14 @@ function quickpay_hosted_form($amount, $currency, $order_id, $form_id, $continue
   }
   $data['amount'] = $amount;
   $data['currency'] = $currency;
-  $data['continueurl'] = $continue_url;
-  $data['cancelurl'] = $cancel_url;
+  $data['continueurl'] = $options['continueurl'];
+  $data['cancelurl'] = $options['cancelurl'];
   // End of required variables.
-  $data['callbackurl'] = $callback_url;
+  $data['callbackurl'] = url(_quickpay_md5_path('quickpay/' . $order_id . '/' . $module), array('absolute' => TRUE));
 
-  $data['autocapture'] = ($autocapture) ? '1' : '0';
+  $data['autocapture'] = ($options['autocapture']) ? '1' : '0';
 
-  $data['description'] = $description;
+  $data['description'] = $options['description'];
 
   if (variable_get('quickpay_test_mode', FALSE)) {
     $data['testmode'] = '1';
@@ -595,7 +632,7 @@ function quickpay_supported_currencies() {
 // --- Core API functions ---
 
 function quickpay_successful($txn) {
-  if ($txn === FALSE) {
+  if ($txn === FALSE || !isset($txn['qpstat'])) {
     return FALSE;
   }
   return $txn['qpstat'] == '000';
@@ -870,6 +907,19 @@ function quickpay_status($txn) {
 // --- Internal functions ---
 
 /**
+ * Return an md5 checksummed path.
+ *
+ * This allows us to create paths that's resistant to tampering. By appending
+ * an md5 sum of the path and drupal_private_key, and checking the sum in
+ * requests, it's not possible to change a path element. This means that we
+ * can put data in the URL, and be sure it's not changed.
+ */
+function _quickpay_md5_path($path) {
+  // The rand is to ensure failure if drupal_private_key haven't been set.
+  return $path . '/' . md5($path . variable_get('drupal_private_key', rand()));
+}
+
+/**
  * Currencies and their multipliers. Internal use only.  Used by other
  * functions as a central place for currency information.
  */
@@ -911,8 +961,9 @@ function _quickpay_carddata($carddata) {
  * @return mixed a response array or FALSE on serious errors.
  */
 function _quickpay_request($msg_type, $request_data) {
-  if (!is_array($request_data))
+  if (!is_array($request_data)) {
     $request_data = (array) $request_data;
+  }
 
   $message = array();
   // Order is impotant here.
@@ -936,10 +987,12 @@ function _quickpay_request($msg_type, $request_data) {
   $merchant = variable_get('quickpay_merchant', NULL);
   $secret = variable_get('quickpay_secret', NULL);
   if (!$merchant || !$secret) {
-    if (!$merchant)
+    if (!$merchant) {
       _quickpay_error(t('Merchant number not set, transaction failed.'));
-    if (!$secret)
+    }
+    if (!$secret) {
       _quickpay_error(t('MD5 secret not set, transaction failed.'));
+    }
     return FALSE;
   }
 
@@ -956,21 +1009,23 @@ function _quickpay_request($msg_type, $request_data) {
   $message['md5check'] = md5(implode('', $md5fields));
 
   if (variable_get('quickpay_debug', FALSE)) {
-    watchdog('quickpay', 'Request parameters: @params', array('@params' => print_r($message, TRUE)), WATCHDOG_DEBUG);
+    debug($message, 'Quickpay request parameters');
   }
 
   if (!_quickpay_validate($message)) {
     _quickpay_error(t('Request message didn\'t pass validation.'));
     return FALSE;
   }
-  $response = drupal_http_request('https://secure.quickpay.dk/api',
-                                  array('Content-Type' =>
-                                        'application/x-www-form-urlencoded'),
-                                  'POST',
-                                  http_build_query($message, FALSE, '&'), 0);
+  $request_options = array(
+    'headers' => array('Content-Type' => 'application/x-www-form-urlencoded'),
+    'method' => 'POST',
+    'data' => http_build_query($message, FALSE, '&'),
+    'max_redirects' => 0,
+  );
+  $response = drupal_http_request('https://secure.quickpay.dk/api', $request_options);
 
   if (variable_get('quickpay_debug', FALSE)) {
-    watchdog('quickpay', 'Request response: @response', array('@response' => print_r($response, TRUE)), WATCHDOG_DEBUG);
+    debug($response, 'Quickpay response parameters');
   }
 
   if ($response->code != 200 || empty($response->data)) {
@@ -1007,7 +1062,7 @@ function _quickpay_validate($data) {
 
   foreach ($data as $field => $value) {
     // No NULL values please
-    if (is_NULL($value)) {
+    if (is_null($value)) {
       _quickpay_error(t('%field cannot be NULL', array('%field' => $field)));
       return FALSE;
     }
@@ -1094,7 +1149,10 @@ function _quickpay_response($response) {
  */
 function _quickpay_validate_currency($currency) {
   $currencies = _quickpay_currencies();
-  return $currencies[$currency];
+  if (isset($currencies[$currency])) {
+    return $currencies[$currency];
+  }
+  return NULL;
 }
 
 /**
@@ -1136,8 +1194,9 @@ function _quickpay_error($string) {
   global $user;
   watchdog('quickpay', $string, array(), WATCHDOG_ERROR);
   // TODO: check user perms instead.
-  if ($user->uid == 1)
-    drupal_set_message($string, 'error');
+  if ($user->uid == 1) {
+    debug($string, 'Quickpay error');
+  }
 }
 
 /**
