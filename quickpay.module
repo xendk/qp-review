@@ -103,7 +103,13 @@ ikano:ikano:Ikano:ikano.jpg";
 
 function quickpay_cards($list) {
   $all_cards = quickpay_all_cards();
-  $all_cards_keys = array_keys($all_cards);
+  $excluded_keys = array('fbg1886', 'ikano');
+
+  // Forbrugsforeningen and Ikano is a special case.
+  $excluded_cards = array_intersect($list, $excluded_keys);
+  // Subtract the excluded cards.
+  $all_cards_keys = array_diff(array_keys($all_cards), $excluded_keys);
+
   if (in_array('creditcard', $list)) {
     $list = array_filter($all_cards_keys, '_quickpay_cards_filter_creditcard');
   }
@@ -111,7 +117,8 @@ function quickpay_cards($list) {
     $list = array_filter($all_cards_keys, '_quickpay_cards_filter_3d_creditcard');
   }
 
-  return array_intersect_key($all_cards, array_flip($list));
+  // Add in excluded cards.
+  return array_intersect_key($all_cards, array_flip($list) + array_flip($excluded_cards));
 }
 
 function _quickpay_cards_filter_creditcard($key) {
