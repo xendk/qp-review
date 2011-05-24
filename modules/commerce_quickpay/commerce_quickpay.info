@@ -1,0 +1,7 @@
+name = "Quickpay Drupal Commerce"
+description   = "Process Drupal Commerce payments using QuickPay."
+dependencies[] = commerce_payment
+dependencies[] = quickpay
+package       = "QuickPay payment gateway"
+core = 7.x
+version = "7.x-1.x"

@@ -1,6 +1,6 @@
 
 OVERVIEW
-======== 
+========
 
 This module works with the Danish payment gateway provider QuickPay.dk
 allowing you to receive payments using the payment options supported
@@ -43,7 +43,7 @@ IMPLEMENTATION
 ==============
 
 The core module provides a block to show the accepted credit cards, as
-required by PBS. 
+required by PBS.
 
 Remember that PBS requires that the customer gets an confirmation of
 the order either by email or as a web page. To implement this as a web

@@ -19,16 +19,19 @@ class QuickPayTest extends DrupalWebTestCase {
   }
 
   function setUp() {
-    parent::setUp();
-    // setUp is called before each test. Just set the order prefix once
-    if (!$this->orderPrefix) {
+    // setUp is called before each test. Just set these things once.
+    if (!isset($this->orderPrefix)) {
       $this->orderPrefix = "qptest" . time() . 't';
       $this->orderNum = 1;
+      // Save creds before DrupalWebTestCase::setUp clears the variables.
+      $this->quickpay_merchant = variable_get('quickpay_merchant', NULL);
+      $this->quickpay_secret = variable_get('quickpay_secret', NULL);
     }
+    parent::setUp();
+    variable_set('quickpay_merchant', $this->quickpay_merchant);
+    variable_set('quickpay_secret', $this->quickpay_secret);
     variable_set('quickpay_order_prefix', $this->orderPrefix);
-    variable_set('quickpay_merchant', '30453131');
-    variable_set('quickpay_secret', '6vgz29iFVym86rkut4X23K8EBRjGQ651pA5ZHl933749M6n47D5P4eba3qxC7U8T');
-    variable_set('quickpay_default_currency', 'DKK');
+    variable_set('quickpay_debug', TRUE);
   }
 
   function tearDown() {
@@ -37,7 +40,7 @@ class QuickPayTest extends DrupalWebTestCase {
 
   function assertState($txn, $state) {
     $code = array_search($state, _quickpay_state_codes());
-    $this->assertTrue($code !== FALSE, 'Unknown status');
+    $this->assertTrue($code !== FALSE, 'State is not unknown');
     if ($code) {
       $this->assertTrue($txn['state'] == $code, 'Transaction state is \'' .
                         $state . '\'');
