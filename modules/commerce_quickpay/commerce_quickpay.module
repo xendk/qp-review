@@ -156,7 +156,11 @@ function commerce_quickpay_capture_form_submit($form, &$form_state) {
 	
 	$payment_method = commerce_payment_method_instance_load('quickpay|commerce_payment_quickpay');
 	
-	$response = quickpay_capture($transaction, $amount);
+	$response = quickpay_capture(array(
+									'transaction' => $transaction->txn_id,
+									'currency' => $transaction->currency_code
+								), $amount);
+								
 	_commerce_quickpay_handle_transaction($transaction->order_id, $payment_method, $response);
 	
 	if (quickpay_successful($response)) {

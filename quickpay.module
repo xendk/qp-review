@@ -166,28 +166,28 @@ function quickpay_settings_form($settings = NULL) {
     '#type' => 'checkbox',
     '#title' => t('Add transaction fee'),
     '#description' => t('Normally the transaction fee is part of the amount paid, by activating this, the fee is added to the amount charged.'),
-    '#default_value' => variable_get('quickpay_autofee', 0),
+    '#default_value' => variable_get('quickpay_autofee', FALSE),
   );
 
 	$form['quickpay_autocapture'] = array(
     '#type' => 'checkbox',
     '#title' => t('Enable auto capture'),
     '#description' => t('Automatically capture authorized amount.'),
-    '#default_value' => variable_get('quickpay_autocapture', 0),
+    '#default_value' => variable_get('quickpay_autocapture', FALSE),
   );
 
   $form['quickpay_test_mode'] = array(
     '#type' => 'checkbox',
     '#title' => t('Test mode'),
     '#description' => t('When active, transactions will be run in test mode, even if the QuickPay account is in production mode. Order ids will get a T appended.'),
-    '#default_value' => variable_get('quickpay_test_mode', 0),
+    '#default_value' => variable_get('quickpay_test_mode', FALSE),
   );
 
   $form['quickpay_debug'] = array(
     '#type' => 'checkbox',
     '#title' => t('Debug log'),
     '#description' => t('Log all request and responses to QuickPay in watchdog.'),
-    '#default_value' => variable_get('quickpay_debug', 0),
+    '#default_value' => variable_get('quickpay_debug', FALSE),
   );
 
   $form['hosted'] = array(
@@ -198,7 +198,7 @@ function quickpay_settings_form($settings = NULL) {
   $form['hosted']['quickpay_hosted_popup'] = array(
     '#type' => 'checkbox',
     '#title' => t('Use popup'),
-    '#default_value' => variable_get('quickpay_hosted_popup', 0),
+    '#default_value' => variable_get('quickpay_hosted_popup', FALSE),
     '#description' => t('Whether to show the credit card from in a popup window.'),
   );
 
@@ -221,13 +221,13 @@ function quickpay_settings_form($settings = NULL) {
     '#title' => t('Language'),
     '#description' => t('The language for the credit card form.'),
     '#options' => $languages,
-    '#default_value' => variable_get('quickpay_hosted_language', array('en')),
+    '#default_value' => variable_get('quickpay_hosted_language', 'en'),
   );
 
   $form['hosted']['quickpay_hosted_link_button'] = array(
     '#type' => 'textfield',
     '#title' => t('Link button text'),
-    '#default_value' => variable_get('quickpay_hosted_link_button', t('Continue to payment')),
+    '#default_value' => variable_get('quickpay_hosted_link_button', 'Continue to payment'),
     '#description' => t('Text of the button to open the credit card form. Subject to translation.')
   );
 
@@ -353,12 +353,6 @@ function theme_quickpay_cards($cards) {
  * whether the id corresponds to an active transaction.
  */
 function quickpay_callback() {
-  $payment_method = commerce_payment_method_instance_load(arg(2));
-  if ($payment_method === FALSE) {
-		watchdog('quickpay', 'Could not load payment method instance: @method_instance', array('@method_instance' => $payment_method_instance), WATCHDOG_ERROR);
-		drupal_access_denied();
-  }
-
   $transaction = quickpay_from_callback();
   if (!$transaction) {
     // quickpay_from_callback already logged it.
@@ -366,7 +360,7 @@ function quickpay_callback() {
     return;
   }
 
-  if (variable_get('quickpay_debug','')) {
+  if (variable_get('quickpay_debug', FALSE)) {
 		debug($message, 'Quickpay callback parameters');
   }
 
@@ -862,9 +856,9 @@ function quickpay_recurring($txn, $orderid, $amount, $currency, $autocapture = F
  *   result from _quickpay_request()
  */
 function quickpay_capture($txn, $amount) {
-  $request_data = array('transaction' => $txn->remote_id);
+  $request_data = array('transaction' => $txn['transaction']);
   list($request_data['amount'], $dummy) =
-    _quickpay_validate_amount($amount, $txn->currency_code);
+    _quickpay_validate_amount($amount, $txn['currency']);
   return _quickpay_request('capture', $request_data);
 }
 
